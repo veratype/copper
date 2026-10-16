@@ -1,0 +1,157 @@
+:root {
+  --bg: #f3f1ec;
+  --ink: #1c1a16;
+  --muted: #6b655c;
+  --line: #d9d3c8;
+  --accent: #0f5c4c;
+  --danger: #8b2e2e;
+  --panel: #fffdf8;
+  --flash: #e7f2ee;
+  --error: #f7e6e6;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, #e8efe9 0, transparent 40%),
+    linear-gradient(180deg, #f7f4ee, var(--bg));
+  color: var(--ink);
+  min-height: 100vh;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.92em; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255,253,248,0.85);
+  backdrop-filter: blur(6px);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 1.15rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+.top nav { display: flex; gap: 1rem; }
+
+main { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+
+h1 { margin: 0 0 0.35rem; font-size: 1.7rem; }
+h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+.muted { color: var(--muted); margin: 0 0 1rem; }
+.row { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1.25rem; }
+.actions { display: flex; gap: 0.75rem; align-items: center; }
+.narrow { max-width: 32rem; }
+.auth { max-width: 24rem; margin: 4rem auto; }
+
+.stack { display: grid; gap: 0.9rem; }
+label { display: grid; gap: 0.35rem; font-size: 0.92rem; }
+label.check { display: flex; align-items: center; gap: 0.5rem; }
+input, textarea, button, .btn {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 0.65rem 0.8rem;
+  background: #fff;
+  color: var(--ink);
+}
+button, .btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  cursor: pointer;
+  display: inline-block;
+}
+button:hover, .btn:hover { filter: brightness(1.05); text-decoration: none; }
+button.danger { background: var(--danger); border-color: var(--danger); }
+button.linkish {
+  background: transparent;
+  color: var(--danger);
+  border: 0;
+  padding: 0;
+}
+
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+th, td { text-align: left; padding: 0.85rem 1rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td.actions form { display: inline; }
+
+.ops { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 1.5rem; }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.5rem;
+}
+.result {
+  background: #171512;
+  color: #e8e2d6;
+  padding: 1rem;
+  border-radius: 12px;
+  overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.flash, .error { padding: 0.75rem 1rem; border-radius: 8px; }
+.flash { background: var(--flash); }
+.error { background: var(--error); color: var(--danger); }
+.empty {
+  padding: 1.5rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: rgba(255,253,248,0.7);
+}
+
+.busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(28, 26, 22, 0.35);
+  backdrop-filter: blur(2px);
+}
+.busy-overlay[hidden] { display: none; }
+.busy-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.85rem;
+  padding: 1.4rem 1.6rem;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 40px rgba(28, 26, 22, 0.18);
+  min-width: 10rem;
+}
+.busy-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.busy-spinner { display: block; }
+.busy-track { stroke: var(--line); }
+.busy-arc {
+  stroke: var(--accent);
+  transform-origin: 24px 24px;
+  animation: busy-spin 0.85s linear infinite;
+}
+@keyframes busy-spin {
+  to { transform: rotate(360deg); }
+}
+body.is-busy { cursor: wait; }
+body.is-busy button, body.is-busy .btn { pointer-events: none; opacity: 0.7; }
+
+.result-head { align-items: center; margin-bottom: 0.75rem; }
+.result-head h2 { margin: 0; }
+.cache-meta { margin: 0.25rem 0 0; font-size: 0.85rem; }
+

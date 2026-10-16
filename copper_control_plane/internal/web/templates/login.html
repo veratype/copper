@@ -1,0 +1,12 @@
+{{define "content"}}
+<section class="auth">
+  <h1>Control plane</h1>
+  <p class="muted">Enter the master password from <code>config.yaml</code>.</p>
+  <form method="post" action="/login" class="stack">
+    <label>Master password
+      <input type="password" name="password" required autofocus>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+</section>
+{{end}}

@@ -1,0 +1,50 @@
+{{define "content"}}
+<section>
+  <div class="row">
+    <div>
+      <h1>{{.Server.Name}}</h1>
+      <p class="muted"><code>{{.Server.Endpoint}}</code> · user {{.Server.Username}}</p>
+    </div>
+    <div class="actions">
+      <a href="/servers/{{.Server.ID}}/edit">Edit</a>
+      <a href="/">Back</a>
+    </div>
+  </div>
+
+  <div class="ops">
+    <form method="post" action="/servers/{{.Server.ID}}/actions/inventory" class="busy" data-busy="Fetching inventory…"><button type="submit">Inventory</button></form>
+    <form method="post" action="/servers/{{.Server.ID}}/actions/boot" class="busy" data-busy="Fetching boot status…"><button type="submit">Boot status</button></form>
+    <form method="post" action="/servers/{{.Server.ID}}/actions/virtual-media" class="busy" data-busy="Fetching virtual media…"><button type="submit">Virtual media</button></form>
+    <form method="post" action="/servers/{{.Server.ID}}/actions/reset" class="busy" data-busy="Sending reboot…" data-confirm="Reboot {{.Server.Name}}?">
+      <button type="submit" class="danger">Reboot</button>
+    </form>
+  </div>
+
+  <form method="post" action="/servers/{{.Server.ID}}/actions/mount" class="stack panel busy" data-busy="Mounting media…">
+    <h2>Mount ISO + one-time boot</h2>
+    <p class="muted">image_url must be reachable by the BMC on the OOB/media plane (copper_bmc media port).</p>
+    <label>Image URL
+      <input name="image_url" required placeholder="http://&lt;oob-ip&gt;:8080/os.iso">
+    </label>
+    <label class="check"><input type="checkbox" name="boot_once" value="1" checked> Boot once to media</label>
+    <label class="check"><input type="checkbox" name="reboot" value="1" checked> Reboot after mount</label>
+    <button type="submit">Mount &amp; boot</button>
+  </form>
+
+  {{if .Result}}
+  <div class="row result-head">
+    <div>
+      <h2>Result</h2>
+      {{if .ResultFetchedAt}}
+      <p class="muted cache-meta">Cached {{.ResultFetchedAt}} · download uses this snapshot (no Redfish call)</p>
+      {{end}}
+    </div>
+    {{if eq .ResultKind "inventory"}}
+    <button type="button" class="btn export-json"
+            data-export-url="/servers/{{.Server.ID}}/export/inventory.json">Download JSON</button>
+    {{end}}
+  </div>
+  <pre class="result">{{.Result}}</pre>
+  {{end}}
+</section>
+{{end}}

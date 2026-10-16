@@ -1,0 +1,12 @@
+# copper_control_plane configuration
+master_password: "changeme"
+
+# Web UI listen address (admin browser)
+listen: "0.0.0.0:9446"
+
+# SQLite database path (created automatically)
+database: "data/control_plane.db"
+
+# Optional: pre-set copper_bmc agent. If empty, CLI asks at startup.
+# copper_bmc_host: "192.168.10.20"
+# copper_bmc_port: 9090

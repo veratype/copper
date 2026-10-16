@@ -1,0 +1,39 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · copper control plane</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">copper</a>
+    <nav>
+      {{if .Authed}}
+      <a href="/">Servers</a>
+      <a href="/servers/new">Add server</a>
+      <a href="/logout">Logout</a>
+      {{end}}
+    </nav>
+  </header>
+  <main>
+    {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    {{template "content" .}}
+  </main>
+  <div id="busy-overlay" class="busy-overlay" hidden aria-live="polite" aria-busy="true">
+    <div class="busy-card">
+      <svg class="busy-spinner" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+        <circle class="busy-track" cx="24" cy="24" r="20" fill="none" stroke-width="4"/>
+        <circle class="busy-arc" cx="24" cy="24" r="20" fill="none" stroke-width="4"
+                stroke-linecap="round" stroke-dasharray="80 126"/>
+      </svg>
+      <p class="busy-label">Working…</p>
+    </div>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
+{{end}}

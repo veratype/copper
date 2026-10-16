@@ -1,0 +1,27 @@
+{{define "content"}}
+<section class="narrow">
+  <h1>{{if .Server}}Edit{{else}}Add{{end}} server</h1>
+  <form method="post" action="{{if .Server}}/servers/{{.Server.ID}}/edit{{else}}/servers/new{{end}}" class="stack">
+    <label>Name
+      <input name="name" required value="{{if .Server}}{{.Server.Name}}{{end}}" placeholder="rack1-node3">
+    </label>
+    <label>Redfish endpoint
+      <input name="endpoint" required value="{{if .Server}}{{.Server.Endpoint}}{{end}}" placeholder="https://192.168.0.100">
+    </label>
+    <label>BMC username
+      <input name="username" required value="{{if .Server}}{{.Server.Username}}{{end}}">
+    </label>
+    <label>BMC password
+      <input type="password" name="password" {{if not .Server}}required{{end}} placeholder="{{if .Server}}leave blank to keep{{end}}">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="insecure" value="1" {{if or (not .Server) (and .Server .Server.Insecure)}}checked{{end}}>
+      Skip TLS certificate verify
+    </label>
+    <label>Notes
+      <textarea name="notes" rows="3">{{if .Server}}{{.Server.Notes}}{{end}}</textarea>
+    </label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{{end}}
