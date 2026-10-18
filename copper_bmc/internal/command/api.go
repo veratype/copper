@@ -10,6 +10,7 @@ import (
 
 	"copper_bmc/internal/activity"
 	"copper_bmc/internal/config"
+	"copper_bmc/internal/media"
 	"copper_bmc/internal/netx"
 	"copper_bmc/internal/redfishx"
 
@@ -48,6 +49,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/dhcp/leases", a.handleDHCPLeases)
 	mux.HandleFunc("GET /v1/net/arp", a.handleARP)
 	mux.HandleFunc("GET /v1/net/lldp", a.handleLLDP)
+	mux.HandleFunc("GET /v1/media/files", a.handleMediaFiles)
 	return a.loggingMiddleware(mux)
 }
 
@@ -185,6 +187,18 @@ func (a *API) handleDHCPLeases(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"leases": a.dhcp.Leases(),
 	})
+}
+
+// handleMediaFiles lists files in the OOB media folder for the control-plane mount UI.
+// GET /v1/media/files
+func (a *API) handleMediaFiles(w http.ResponseWriter, _ *http.Request) {
+	cat, err := media.ListCatalog(a.cfg)
+	if err != nil {
+		a.act.Error("media", "list files failed: %v", err)
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cat)
 }
 
 // handleLLDP returns sighted LLDP neighbors on the OOB plane.
@@ -358,12 +372,22 @@ func (a *API) handleVirtualMediaMount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	a.act.Info("redfish", "virtual-media mount %s image=%s", t.Endpoint, body.ImageURL)
+	bootOnce := true
+	if body.BootOnce != nil {
+		bootOnce = *body.BootOnce
+	}
+	a.act.Info("redfish", "virtual-media mount request bmc=%s image=%s boot_once=%v reboot=%v",
+		t.Endpoint, body.ImageURL, bootOnce, body.Reboot)
 	result, err := a.rf.MountBootMedia(t, body.MountMediaRequest)
 	if err != nil {
-		a.act.Error("redfish", "virtual-media mount %s failed: %v", t.Endpoint, err)
+		a.act.Error("redfish", "virtual-media mount request failed bmc=%s: %v", t.Endpoint, err)
 		writeErr(w, http.StatusBadGateway, err)
 		return
+	}
+	if method, _ := result["insert_method"].(string); method != "" {
+		a.act.Info("redfish", "virtual-media mount request ok bmc=%s method=%s", t.Endpoint, method)
+	} else {
+		a.act.Info("redfish", "virtual-media mount request ok bmc=%s", t.Endpoint)
 	}
 	writeJSON(w, http.StatusAccepted, result)
 }

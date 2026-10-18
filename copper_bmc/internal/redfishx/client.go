@@ -18,10 +18,28 @@ type Target struct {
 	Insecure bool   `json:"insecure"`
 }
 
+// LogFunc receives redfish operation progress for the agent activity console.
+// level is "info", "warn", or "error".
+type LogFunc func(level, format string, args ...any)
+
 // Client wraps gofish for southbound Redfish operations.
-type Client struct{}
+type Client struct {
+	logfn LogFunc
+}
 
 func New() *Client { return &Client{} }
+
+// SetLogger wires agent activity logging (optional).
+func (c *Client) SetLogger(fn LogFunc) {
+	c.logfn = fn
+}
+
+func (c *Client) logf(level, format string, args ...any) {
+	if c == nil || c.logfn == nil {
+		return
+	}
+	c.logfn(level, format, args...)
+}
 
 func (c *Client) connect(t Target) (*gofish.APIClient, error) {
 	if strings.TrimSpace(t.Endpoint) == "" {
@@ -1221,39 +1239,55 @@ func (c *Client) MountBootMedia(t Target, req MountMediaRequest) (map[string]any
 		resetType = string(schemas.ForceRestartResetType)
 	}
 
+	c.logf("info", "virtual-media mount start bmc=%s image=%s boot_target=%s boot_once=%v reboot=%v device_id=%q",
+		t.Endpoint, req.ImageURL, bootTarget, bootOnce, req.Reboot, req.DeviceID)
+
 	api, err := c.connect(t)
 	if err != nil {
 		return nil, fmt.Errorf("redfish connect: %w", err)
 	}
 	defer api.Logout()
 
-	vm, source, err := findVirtualMedia(api, req.DeviceID)
+	candidates, err := listVirtualMediaCandidates(api, req.DeviceID)
 	if err != nil {
+		c.logf("error", "virtual-media device discovery failed: %v", err)
 		return nil, err
 	}
+	c.logf("info", "virtual-media discovered %d candidate slot(s)", len(candidates))
+	for i, cand := range candidates {
+		c.logf("info", "virtual-media candidate[%d] id=%s name=%q source=%s inserted=%v types=%v supports_insert=%v",
+			i, cand.vm.ID, cand.vm.Name, cand.source, derefBool(cand.vm.Inserted), vmMediaTypes(cand.vm), cand.vm.SupportsMediaInsert)
+	}
 
-	if derefBool(vm.Inserted) {
-		if _, err := vm.EjectMedia(); err != nil {
-			return nil, fmt.Errorf("eject existing media: %w", err)
+	var (
+		vm       *schemas.VirtualMedia
+		source   string
+		method   string
+		attempts []insertAttempt
+		lastErr  error
+	)
+	for _, cand := range candidates {
+		c.logf("info", "virtual-media trying slot id=%s source=%s", cand.vm.ID, cand.source)
+		m, atts, insertErr := c.insertMediaRobust(cand.vm, cand.source, req.ImageURL)
+		attempts = append(attempts, atts...)
+		if insertErr == nil {
+			vm, source, method = cand.vm, cand.source, m
+			lastErr = nil
+			break
 		}
+		lastErr = insertErr
+		c.logf("warn", "virtual-media slot id=%s exhausted: %v", cand.vm.ID, insertErr)
+	}
+	if vm == nil {
+		c.logf("error", "virtual-media mount failed on all slots for bmc=%s (%d attempt(s) logged above)", t.Endpoint, len(attempts))
+		if lastErr == nil {
+			lastErr = fmt.Errorf("insert media failed on all virtual media slots")
+		}
+		return nil, lastErr
 	}
 
-	inserted := true
-	writeProtected := true
-	proto := schemas.HTTPTransferProtocolType
-	if strings.HasPrefix(strings.ToLower(req.ImageURL), "https://") {
-		proto = schemas.HTTPSTransferProtocolType
-	}
-	params := &schemas.VirtualMediaInsertMediaParameters{
-		Image:                req.ImageURL,
-		Inserted:             &inserted,
-		WriteProtected:       &writeProtected,
-		TransferProtocolType: &proto,
-		MediaType:            schemas.CDVirtualMediaType,
-	}
-	if _, err := vm.InsertMedia(params); err != nil {
-		return nil, fmt.Errorf("insert media: %w", err)
-	}
+	c.logf("info", "virtual-media insert settled method=%s device=%s — setting boot override target=%s once=%v",
+		method, vmLabel(vm), bootTarget, bootOnce)
 
 	sys, err := firstSystem(api)
 	if err != nil {
@@ -1268,25 +1302,33 @@ func (c *Client) MountBootMedia(t Target, req MountMediaRequest) (map[string]any
 		BootSourceOverrideTarget:  schemas.BootSource(bootTarget),
 		BootSourceOverrideEnabled: enabled,
 	}); err != nil {
+		c.logf("error", "virtual-media set boot failed: %v", err)
 		return nil, fmt.Errorf("set one-time boot to %s: %w", bootTarget, err)
 	}
+	c.logf("info", "virtual-media boot override set ok target=%s enabled=%s", bootTarget, enabled)
 
 	result := map[string]any{
-		"image_url":     req.ImageURL,
-		"virtual_media": mapVM(vm, source),
-		"boot_target":   bootTarget,
-		"boot_once":     bootOnce,
-		"rebooted":      false,
+		"image_url":       req.ImageURL,
+		"virtual_media":   mapVM(vm, source),
+		"insert_method":   method,
+		"insert_attempts": attempts,
+		"boot_target":     bootTarget,
+		"boot_once":       bootOnce,
+		"rebooted":        false,
 	}
 
 	if req.Reboot {
+		c.logf("info", "virtual-media issuing reset type=%s", resetType)
 		if _, err := sys.Reset(schemas.ResetType(resetType)); err != nil {
+			c.logf("error", "virtual-media reset failed after successful mount: %v", err)
 			return nil, fmt.Errorf("media mounted and boot set, but reset failed: %w", err)
 		}
 		result["rebooted"] = true
 		result["reset_type"] = resetType
+		c.logf("info", "virtual-media reset accepted type=%s", resetType)
 	}
 
+	c.logf("info", "virtual-media mount complete bmc=%s method=%s rebooted=%v", t.Endpoint, method, req.Reboot)
 	return result, nil
 }
 
@@ -1345,9 +1387,23 @@ func mapVM(vm *schemas.VirtualMedia, source string) VirtualMediaInfo {
 	return info
 }
 
+type vmCandidate struct {
+	vm     *schemas.VirtualMedia
+	source string
+}
+
 func findVirtualMedia(api *gofish.APIClient, deviceID string) (*schemas.VirtualMedia, string, error) {
-	var candidates []*schemas.VirtualMedia
-	var sources []string
+	cands, err := listVirtualMediaCandidates(api, deviceID)
+	if err != nil {
+		return nil, "", err
+	}
+	return cands[0].vm, cands[0].source, nil
+}
+
+// listVirtualMediaCandidates returns VirtualMedia slots in preference order
+// (free CD/DVD first, then any CD/DVD, then remaining slots).
+func listVirtualMediaCandidates(api *gofish.APIClient, deviceID string) ([]vmCandidate, error) {
+	var all []vmCandidate
 
 	if managers, err := api.Service.Managers(); err == nil {
 		for _, m := range managers {
@@ -1356,8 +1412,7 @@ func findVirtualMedia(api *gofish.APIClient, deviceID string) (*schemas.VirtualM
 				continue
 			}
 			for _, vm := range vms {
-				candidates = append(candidates, vm)
-				sources = append(sources, "manager:"+m.ID)
+				all = append(all, vmCandidate{vm: vm, source: "manager:" + m.ID})
 			}
 		}
 	}
@@ -1368,37 +1423,37 @@ func findVirtualMedia(api *gofish.APIClient, deviceID string) (*schemas.VirtualM
 				continue
 			}
 			for _, vm := range vms {
-				candidates = append(candidates, vm)
-				sources = append(sources, "system:"+s.ID)
+				all = append(all, vmCandidate{vm: vm, source: "system:" + s.ID})
 			}
 		}
 	}
 
-	if len(candidates) == 0 {
-		return nil, "", fmt.Errorf("no VirtualMedia devices found on BMC")
+	if len(all) == 0 {
+		return nil, fmt.Errorf("no VirtualMedia devices found on BMC")
 	}
 
 	if deviceID != "" {
-		for i, vm := range candidates {
-			if vm.ID == deviceID || vm.Name == deviceID {
-				return vm, sources[i], nil
+		for _, cand := range all {
+			if cand.vm.ID == deviceID || cand.vm.Name == deviceID {
+				return []vmCandidate{cand}, nil
 			}
 		}
-		return nil, "", fmt.Errorf("virtual media device %q not found", deviceID)
+		return nil, fmt.Errorf("virtual media device %q not found", deviceID)
 	}
 
-	// Prefer a CD-capable slot that is free or any CD-capable slot.
-	for i, vm := range candidates {
-		if supportsCD(vm) && !derefBool(vm.Inserted) {
-			return vm, sources[i], nil
+	var freeCD, busyCD, other []vmCandidate
+	for _, cand := range all {
+		switch {
+		case supportsCD(cand.vm) && !derefBool(cand.vm.Inserted):
+			freeCD = append(freeCD, cand)
+		case supportsCD(cand.vm):
+			busyCD = append(busyCD, cand)
+		default:
+			other = append(other, cand)
 		}
 	}
-	for i, vm := range candidates {
-		if supportsCD(vm) {
-			return vm, sources[i], nil
-		}
-	}
-	return candidates[0], sources[0], nil
+	out := append(append(freeCD, busyCD...), other...)
+	return out, nil
 }
 
 func supportsCD(vm *schemas.VirtualMedia) bool {

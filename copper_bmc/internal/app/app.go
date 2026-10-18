@@ -25,6 +25,16 @@ func Run(cfg *config.Config) error {
 	printBanner(cfg, act)
 
 	rf := redfishx.New()
+	rf.SetLogger(func(level, format string, args ...any) {
+		switch level {
+		case "error":
+			act.Error("redfish", format, args...)
+		case "warn":
+			act.Warn("redfish", format, args...)
+		default:
+			act.Info("redfish", format, args...)
+		}
+	})
 	mediaSrv := media.New(cfg, act)
 
 	var dhcpMgr *copper_dhcp.Manager
@@ -122,6 +132,7 @@ func printBanner(cfg *config.Config, act *activity.Buffer) {
 	fmt.Println("    routes :")
 	fmt.Println("      GET  /v1/health")
 	fmt.Println("      GET  /v1/activity")
+	fmt.Println("      GET  /v1/media/files")
 	if cfg.LLDPRole {
 		fmt.Println("      GET  /v1/net/lldp")
 	}
