@@ -52,7 +52,7 @@ Once the agent is running, you should see both networks listed, something like t
 - Media server at `http://<oob-ip>:8080/`
 - Command API at `http://<cp-ip>:9090/`, which offers `GET /v1/health`, `GET /v1/activity`, and routes for system info, boot settings, virtual media and resets. If you enabled the DHCP role, DHCP routes are there too.
 
-Everything the agent does is printed in its console. That includes DHCP offers and acknowledgements, LLDP neighbors it spots, image downloads, and Redfish operations. The same log also appears on the control plane's **Activity** page, and DHCP events on their own stream live on the **OOB DHCP** page.
+Everything the agent does is printed in its console. That includes DHCP offers and acknowledgements, LLDP neighbors it spots, image downloads, and Redfish operations. The same log also appears on the control plane's **Activity** page, and DHCP events on their own stream live on the **OOB DHCP** page. When the DHCP role is on, the agent keeps `data/oob_dhcp_config.json` and `data/oob_dhcp_leases.json` so a BMC restart restores the last policy and leases by itself. Separately, the control plane watches agent health and auto-repushes the saved OOB DHCP policy if the agent comes back with DHCP not running — no manual push required.
 
 **Finding out where servers are plugged in (LLDP).** Network switches regularly announce themselves using a protocol called LLDP. copper_bmc quietly listens for these announcements on the OOB media network card and makes them available at `GET /v1/net/lldp`. Listening this way requires the `CAP_NET_RAW` permission. In the control plane, the **Sync OOB DHCP + LLDP** button and the per-server **Lookup chassis (LLDP)** button use this data to fill in each server's `chassis_id` and any missing MAC addresses. They match a server to an announcement by its source MAC, chassis ID, or management IP.
 
@@ -82,7 +82,7 @@ The interface has two DHCP pages, one for each network.
 
 | Page | Network | What it does |
 |------|---------|--------------|
-| **OOB DHCP** | BMC / management network | Sets the address pool and MAC address filters. **Save & push** sends the settings to copper_bmc, which only works if you enabled the DHCP role when starting the agent. This page only handles addressing, so there are no PXE settings here. |
+| **OOB DHCP** | BMC / management network | Sets the address pool and MAC address filters. **Save & push** sends the settings to copper_bmc (DHCP role must be enabled). Shows live MAC→IP leases from the agent. **Sync from agent** pulls leases + LLDP into inventory. Addressing only — no PXE settings here. |
 | **Data DHCP** | Servers' data network cards | Runs a DHCPv4 server inside the control plane itself, using `copper_dhcp`. Includes the **next-server** and **boot file** settings for network booting (PXE). Using port 67 needs root or the `CAP_NET_BIND_SERVICE` permission. |
 
 ### Next-server and boot file, explained

@@ -4,12 +4,20 @@
     <h1>OOB DHCP</h1>
     <p class="muted">OOB/BMC-plane addressing only — policy is pushed to <code>copper_bmc</code>, which hands BMCs an IP on the management network. PXE next-server / boot-file live on <a href="/dhcp/data">Data DHCP</a>.</p>
   </div>
+  <div class="actions">
+    <form method="post" action="/dhcp/oob/sync" class="busy" data-busy="Syncing leases + LLDP from agent…">
+      <button type="submit">Sync from agent</button>
+    </form>
+  </div>
 </section>
 
 {{if not .DHCPRole}}
 <p class="error">Agent DHCP role is <strong>not</strong> enabled{{if .AgentError}} ({{.AgentError}}){{else}} — restart <code>copper_bmc</code> and answer yes to the DHCP role prompt{{end}}.</p>
 {{else}}
-<p class="flash">Agent DHCP role is enabled. Running: <strong>{{if .DHCPRunning}}yes{{else}}no{{end}}</strong></p>
+<p class="flash">Agent DHCP role is enabled. Running: <strong>{{if .DHCPRunning}}yes{{else}}no{{end}}</strong>. After a BMC restart the agent restores its last config automatically; if DHCP is still down, this control plane re-pushes the saved policy on its own.</p>
+{{end}}
+{{if .AgentWatchNote}}
+<p class="flash">{{.AgentWatchNote}}</p>
 {{end}}
 
 <form method="post" action="/dhcp/oob" class="stack narrow">
@@ -78,12 +86,38 @@
   </div>
 </form>
 
-{{if .LeasesJSON}}
 <section style="margin-top:2rem">
-  <h2>Leases on agent</h2>
-  <pre class="result">{{.LeasesJSON}}</pre>
+  <div class="row result-head">
+    <div>
+      <h2>Leases on agent</h2>
+      <p class="muted">Live MAC→IP bindings from <code>copper_bmc</code> (persisted on the agent across restarts).</p>
+    </div>
+  </div>
+  {{if .Leases}}
+  <table>
+    <thead>
+      <tr>
+        <th>MAC</th>
+        <th>IP</th>
+        <th>Expires</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Leases}}
+      <tr>
+        <td><code>{{.MAC}}</code></td>
+        <td><code>{{.IP}}</code></td>
+        <td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}—{{end}}</td>
+        <td>{{if .Reserved}}<span class="badge badge-bound">reserved</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No active leases reported by the agent yet.</p>
+  {{end}}
 </section>
-{{end}}
 
 <section class="activity-panel" style="margin-top:2rem">
   <div class="row result-head">

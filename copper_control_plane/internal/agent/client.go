@@ -37,6 +37,13 @@ func (c *Client) Health() (map[string]any, error) {
 	return out, err
 }
 
+// HealthQuick is Health with a short timeout for background watchers.
+func (c *Client) HealthQuick() (map[string]any, error) {
+	client := *c
+	client.HTTPClient = &http.Client{Timeout: 3 * time.Second}
+	return client.Health()
+}
+
 // DHCPRoleEnabled reports whether the agent was started with the DHCP role.
 func (c *Client) DHCPRoleEnabled() (bool, error) {
 	h, err := c.Health()

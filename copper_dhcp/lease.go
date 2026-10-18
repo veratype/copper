@@ -76,10 +76,11 @@ func (l *Lease) UnmarshalJSON(data []byte) error {
 
 // Store is an in-memory lease table with pool allocation.
 type Store struct {
-	mu    sync.Mutex
-	cfg   *Normalized
-	byMAC map[string]*Lease
-	byIP  map[string]*Lease
+	mu          sync.Mutex
+	cfg         *Normalized
+	byMAC       map[string]*Lease
+	byIP        map[string]*Lease
+	persistPath string // optional JSON file; empty disables persistence
 }
 
 func NewStore(cfg *Normalized) *Store {
@@ -103,6 +104,7 @@ func (s *Store) Allocate(mac net.HardwareAddr, prefer net.IP) (net.IP, error) {
 
 	if ip, ok := s.cfg.ReserveMAC[key]; ok {
 		s.putLocked(key, ip, true)
+		s.saveLocked()
 		return append(net.IP(nil), ip...), nil
 	}
 
@@ -111,11 +113,13 @@ func (s *Store) Allocate(mac net.HardwareAddr, prefer net.IP) (net.IP, error) {
 	}
 	if prefer != nil && s.inPool(prefer) && s.ipFreeForLocked(prefer, key) {
 		s.putLocked(key, prefer, false)
+		s.saveLocked()
 		return append(net.IP(nil), prefer...), nil
 	}
 
 	if existing, ok := s.byMAC[key]; ok && !existing.Reserved {
 		s.putLocked(key, existing.IP, false)
+		s.saveLocked()
 		return append(net.IP(nil), existing.IP...), nil
 	}
 
@@ -125,6 +129,7 @@ func (s *Store) Allocate(mac net.HardwareAddr, prefer net.IP) (net.IP, error) {
 			continue
 		}
 		s.putLocked(key, ip, false)
+		s.saveLocked()
 		return append(net.IP(nil), ip...), nil
 	}
 	return nil, fmt.Errorf("dhcp pool exhausted")
@@ -151,10 +156,12 @@ func (s *Store) Release(mac net.HardwareAddr) {
 		// Keep reservation slot occupied by this MAC conceptually; just refresh expiry drop.
 		delete(s.byMAC, key)
 		delete(s.byIP, lease.IP.String())
+		s.saveLocked()
 		return
 	}
 	delete(s.byMAC, key)
 	delete(s.byIP, lease.IP.String())
+	s.saveLocked()
 }
 
 // Decline frees an IP after client decline (and forgets MAC binding).
@@ -169,13 +176,18 @@ func (s *Store) Decline(mac net.HardwareAddr, ip net.IP) {
 	if ip != nil {
 		delete(s.byIP, ip.To4().String())
 	}
+	s.saveLocked()
 }
 
 // Leases returns a snapshot of active leases.
 func (s *Store) Leases() []Lease {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before := len(s.byMAC)
 	s.expireLocked(time.Now())
+	if len(s.byMAC) != before {
+		s.saveLocked()
+	}
 	out := make([]Lease, 0, len(s.byMAC))
 	for _, l := range s.byMAC {
 		out = append(out, Lease{

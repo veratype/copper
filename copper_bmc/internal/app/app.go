@@ -31,7 +31,19 @@ func Run(cfg *config.Config) error {
 	if cfg.DHCPRole {
 		dhcpMgr = copper_dhcp.NewManager()
 		dhcpMgr.SetLogger(act.Logger("dhcp"))
-		act.Info("dhcp", "DHCP role enabled — waiting for config from copper_control_plane")
+		// Persist leases + last policy so a BMC restart restores DHCP without a manual push.
+		leaseFile := filepath.Join("data", "oob_dhcp_leases.json")
+		configFile := filepath.Join("data", "oob_dhcp_config.json")
+		dhcpMgr.SetLeaseFile(leaseFile)
+		dhcpMgr.SetConfigFile(configFile)
+		if ok, err := dhcpMgr.ApplySaved(); err != nil {
+			act.Warn("dhcp", "could not restore saved config from %s: %v — waiting for control plane push", configFile, err)
+		} else if ok {
+			st := dhcpMgr.Status()
+			act.Info("dhcp", "restored saved config from %s (running=%v, leases=%s)", configFile, st.Running, leaseFile)
+		} else {
+			act.Info("dhcp", "DHCP role enabled — no saved config yet; waiting for copper_control_plane (leases: %s)", leaseFile)
+		}
 	} else {
 		act.Info("app", "DHCP role disabled (Redfish agent only)")
 	}
@@ -74,7 +86,8 @@ func printBanner(cfg *config.Config, act *activity.Buffer) {
 	fmt.Println()
 	if cfg.DHCPRole {
 		fmt.Println("  [OOB / BMC plane]  DHCP role ENABLED")
-		fmt.Println("    waiting for config from copper_control_plane")
+		fmt.Println("    restores last config from data/oob_dhcp_config.json on startup")
+		fmt.Println("    otherwise waits for config from copper_control_plane")
 		fmt.Println("    PUT /v1/dhcp/config  GET /v1/dhcp/config  GET /v1/dhcp/leases")
 		fmt.Println()
 	} else {

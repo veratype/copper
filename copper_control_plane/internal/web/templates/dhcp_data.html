@@ -75,10 +75,31 @@
   </div>
 </form>
 
-{{if .LeasesJSON}}
 <section style="margin-top:2rem">
   <h2>Leases on this host</h2>
-  <pre class="result">{{.LeasesJSON}}</pre>
+  {{if .Leases}}
+  <table>
+    <thead>
+      <tr>
+        <th>MAC</th>
+        <th>IP</th>
+        <th>Expires</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Leases}}
+      <tr>
+        <td><code>{{.MAC}}</code></td>
+        <td><code>{{.IP}}</code></td>
+        <td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}—{{end}}</td>
+        <td>{{if .Reserved}}<span class="badge badge-bound">reserved</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No active leases yet.</p>
+  {{end}}
 </section>
-{{end}}
 {{end}}

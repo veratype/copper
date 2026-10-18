@@ -72,12 +72,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ui.StartAgentWatch()
 
 	fmt.Printf("Web UI listening on http://%s/\n", cfg.Listen)
 	fmt.Printf("SQLite database: %s\n", dbPath)
 	fmt.Printf("copper_bmc agent: %s\n", cfg.AgentBaseURL())
 	fmt.Println("Login with master_password from config.yaml")
 	fmt.Println("Data DHCP: configure under /dhcp/data (PXE next-server + boot file)")
+	fmt.Println("OOB DHCP: auto-repushes saved policy when copper_bmc returns without DHCP running")
 	log.Printf("control plane ready")
 	return http.ListenAndServe(cfg.Listen, ui.Handler())
 }

@@ -23,12 +23,13 @@ import (
 )
 
 type Server struct {
-	cfg      *config.Config
-	store    *store.Store
-	agent    *agent.Client
+	cfg       *config.Config
+	store     *store.Store
+	agent     *agent.Client
 	localDHCP *copper_dhcp.Manager // data-plane DHCP running in this process
-	pages    map[string]*template.Template
-	staticFS fs.FS
+	pages     map[string]*template.Template
+	staticFS  fs.FS
+	watch     agentWatchState
 }
 
 type pageData struct {
@@ -47,11 +48,13 @@ type pageData struct {
 	DHCPRole         bool
 	DHCPRunning      bool
 	AgentError       string
+	AgentWatchNote   string // background auto-repush / reachability status
 	DNSJoined        string
 	AllowMACsText    string // extra MACs not tied to inventory servers
 	DenyMACsText     string
 	ReservationsText string
 	LeasesJSON       string
+	Leases           []leaseRow // structured agent/local leases for UI tables
 	KnownMACs        []knownMAC // inventory servers with a MAC, for DHCP allow checkboxes
 
 	// CSV import
@@ -64,6 +67,14 @@ type knownMAC struct {
 	Name     string
 	MAC      string
 	Selected bool
+}
+
+// leaseRow is one DHCP MAC→IP binding for templates.
+type leaseRow struct {
+	MAC       string
+	IP        string
+	ExpiresAt string
+	Reserved  bool
 }
 
 func New(cfg *config.Config, st *store.Store, ag *agent.Client, localDHCP *copper_dhcp.Manager, templatesFS, staticFS fs.FS) (*Server, error) {
@@ -119,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /dhcp/oob", s.auth(s.handleDHCPGet))
 	mux.Handle("POST /dhcp/oob", s.auth(s.handleDHCPSave))
 	mux.Handle("POST /dhcp/oob/push", s.auth(s.handleDHCPPush))
+	mux.Handle("POST /dhcp/oob/sync", s.auth(s.handleDHCPSync))
 	mux.Handle("POST /dhcp", s.auth(s.handleDHCPSave))             // legacy form action
 	mux.Handle("POST /dhcp/push", s.auth(s.handleDHCPPush))        // legacy
 
@@ -772,6 +784,17 @@ func (s *Server) handleDHCPPush(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery("Pushed to agent"), http.StatusSeeOther)
 }
 
+func (s *Server) handleDHCPSync(w http.ResponseWriter, r *http.Request) {
+	res := s.reconcileOOBDHCP()
+	if res.Error != "" {
+		http.Redirect(w, r, "/dhcp/oob?error="+urlQuery(res.Error), http.StatusSeeOther)
+		return
+	}
+	msg := fmt.Sprintf("Synced from agent: %d lease(s), %d matched, %d updated, %d unmatched; LLDP: %d neighbor(s), %d enriched",
+		res.LeasesSeen, res.Bound, res.Updated, res.Unmatched, res.LLDPSeen, res.LLDPEnriched)
+	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery(msg), http.StatusSeeOther)
+}
+
 func (s *Server) handleDataDHCPGet(w http.ResponseWriter, r *http.Request) {
 	data := s.dataDHCPPageData("")
 	if flash := r.URL.Query().Get("flash"); flash != "" {
@@ -841,6 +864,7 @@ func (s *Server) dataDHCPPageData(errMsg string) pageData {
 		st := s.localDHCP.Status()
 		data.DHCPRunning = st.Running
 		leases := s.localDHCP.Leases()
+		data.Leases = leaseRowsFromDHCP(leases)
 		if b, err := json.MarshalIndent(map[string]any{"leases": leases}, "", "  "); err == nil {
 			data.LeasesJSON = string(b)
 		}
@@ -873,10 +897,11 @@ func (s *Server) dhcpPageData(errMsg string) pageData {
 		cfg.LeaseTime = "1h"
 	}
 	data := pageData{
-		Title:  "OOB DHCP",
-		Authed: true,
-		Error:  errMsg,
-		DHCP:   cfg,
+		Title:          "OOB DHCP",
+		Authed:         true,
+		Error:          errMsg,
+		DHCP:           cfg,
+		AgentWatchNote: s.agentWatchNote(),
 	}
 	s.fillDHCPFormTexts(&data)
 
@@ -892,6 +917,7 @@ func (s *Server) dhcpPageData(errMsg string) pageData {
 				}
 			}
 			if leases, err := s.agent.DHCPLeases(); err == nil {
+				data.Leases = leaseRowsFromAgent(leases)
 				if b, err := json.MarshalIndent(leases, "", "  "); err == nil {
 					data.LeasesJSON = string(b)
 				}
@@ -899,6 +925,45 @@ func (s *Server) dhcpPageData(errMsg string) pageData {
 		}
 	}
 	return data
+}
+
+func leaseRowsFromDHCP(leases []copper_dhcp.Lease) []leaseRow {
+	out := make([]leaseRow, 0, len(leases))
+	for _, l := range leases {
+		ip := ""
+		if l.IP != nil {
+			ip = l.IP.String()
+		}
+		out = append(out, leaseRow{
+			MAC:       l.MAC,
+			IP:        ip,
+			ExpiresAt: l.ExpiresAt.Local().Format("2006-01-02 15:04:05"),
+			Reserved:  l.Reserved,
+		})
+	}
+	return out
+}
+
+func leaseRowsFromAgent(raw map[string]any) []leaseRow {
+	views, err := parseLeasesPayload(raw)
+	if err != nil {
+		return nil
+	}
+	// Prefer typed decode for expiry / reserved when present.
+	b, err := json.Marshal(raw)
+	if err == nil {
+		var typed struct {
+			Leases []copper_dhcp.Lease `json:"leases"`
+		}
+		if json.Unmarshal(b, &typed) == nil && len(typed.Leases) > 0 {
+			return leaseRowsFromDHCP(typed.Leases)
+		}
+	}
+	out := make([]leaseRow, 0, len(views))
+	for _, v := range views {
+		out = append(out, leaseRow{MAC: v.MAC, IP: v.IP})
+	}
+	return out
 }
 
 func (s *Server) fillDHCPFormTexts(data *pageData) {
