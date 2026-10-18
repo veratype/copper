@@ -29,6 +29,9 @@ type Config struct {
 	MediaFolder     string
 	MediaListener   Listener
 	CommandListener Listener
+	// DHCPRole means this agent accepts DHCP config from copper_control_plane
+	// and may run a DHCPv4 server on the OOB plane. Config never comes from YAML.
+	DHCPRole bool
 }
 
 type nicOption struct {
@@ -70,6 +73,15 @@ func Prompt(in *bufio.Reader) (*Config, error) {
 		return nil, err
 	}
 
+	fmt.Println()
+	fmt.Println("--- DHCP role (optional) ---")
+	fmt.Println("If enabled, this agent can run DHCPv4 on the OOB/BMC network.")
+	fmt.Println("Policy (pool, MAC filters, …) is configured only in copper_control_plane.")
+	dhcpRole, err := askYesNo(in, "Enable DHCP server role on this agent?", false)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		MediaFolder: folder,
 		MediaListener: Listener{
@@ -82,7 +94,33 @@ func Prompt(in *bufio.Reader) (*Config, error) {
 			BindAddr:  cmdBind,
 			Interface: cmdIface,
 		},
+		DHCPRole: dhcpRole,
 	}, nil
+}
+
+func askYesNo(in *bufio.Reader, label string, def bool) (bool, error) {
+	hint := "y/N"
+	if def {
+		hint = "Y/n"
+	}
+	for {
+		fmt.Printf("%s [%s]: ", label, hint)
+		line, err := readLine(in)
+		if err != nil {
+			return false, err
+		}
+		if line == "" {
+			return def, nil
+		}
+		switch strings.ToLower(line) {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		default:
+			fmt.Println("  Enter y or n.")
+		}
+	}
 }
 
 func (l Listener) Addr() string {

@@ -1,0 +1,7 @@
+go 1.26.0
+
+use (
+	./copper_bmc
+	./copper_control_plane
+	./copper_dhcp
+)

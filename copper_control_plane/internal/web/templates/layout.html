@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b4f9c">
   <title>{{.Title}} · copper control plane</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -13,7 +14,11 @@
     <nav>
       {{if .Authed}}
       <a href="/">Servers</a>
+      <a href="/servers/import">Import CSV</a>
       <a href="/servers/new">Add server</a>
+      <a href="/dhcp/oob">OOB DHCP</a>
+      <a href="/dhcp/data">Data DHCP</a>
+      <a href="/activity">Activity</a>
       <a href="/logout">Logout</a>
       {{end}}
     </nav>

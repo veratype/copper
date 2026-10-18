@@ -1,0 +1,29 @@
+{{define "content"}}
+<section class="row">
+  <div>
+    <h1>Agent activity</h1>
+    <p class="muted">Live console from <code>{{.AgentURL}}</code> — same lines copper_bmc prints locally (DHCP, media, Redfish, command).</p>
+  </div>
+</section>
+
+<div class="activity-toolbar">
+  <label class="activity-filter">Component
+    <select id="activity-component">
+      <option value="">all</option>
+      <option value="dhcp">dhcp</option>
+      <option value="media">media</option>
+      <option value="command">command</option>
+      <option value="redfish">redfish</option>
+      <option value="net">net</option>
+      <option value="app">app</option>
+    </select>
+  </label>
+  <button type="button" id="activity-clear" class="linkish">Clear view</button>
+  <span class="muted activity-status" id="activity-status">connecting…</span>
+</div>
+
+<pre class="activity-console" id="activity-console"
+     data-activity-url="/api/agent/activity"
+     data-poll-ms="2000"
+     aria-live="polite"></pre>
+{{end}}

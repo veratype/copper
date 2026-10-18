@@ -45,15 +45,93 @@ func (c *Client) connect(t Target) (*gofish.APIClient, error) {
 // Component inventory ---------------------------------------------------------
 
 // SystemInventory is the combined hardware snapshot returned by GET /v1/system.
-// Keys: system / cpu / ram / storage / network / gpu / bmc.
+// Keys: system / cpu / ram / storage / network / gpu / pcie / psu / fans / bmc / counts.
 type SystemInventory struct {
-	System  SystemInfo  `json:"system"`
-	CPU     []CPUInfo   `json:"cpu"`
-	RAM     []RAMInfo   `json:"ram"`
-	Storage []DriveInfo `json:"storage"`
-	Network []NICInfo   `json:"network"`
-	GPU     []GPUInfo   `json:"gpu"`
-	BMC     []BMCInfo   `json:"bmc"`
+	System  SystemInfo   `json:"system"`
+	CPU     []CPUInfo    `json:"cpu"`
+	RAM     []RAMInfo    `json:"ram"`
+	Storage []DriveInfo  `json:"storage"`
+	Network []NICInfo    `json:"network"`
+	GPU     []GPUInfo    `json:"gpu"`
+	PCIe    []PCIeInfo   `json:"pcie"`
+	PSU     []PSUInfo    `json:"psu"`
+	Fans    []FanInfo    `json:"fans"`
+	BMC     []BMCInfo    `json:"bmc"`
+	Counts  InventoryCounts `json:"counts"`
+}
+
+// InventoryCounts are convenience totals (same as len of each slice).
+type InventoryCounts struct {
+	CPU     int `json:"cpu"`
+	RAM     int `json:"ram"`
+	Storage int `json:"storage"`
+	Network int `json:"network"`
+	GPU     int `json:"gpu"`
+	PCIe    int `json:"pcie"`
+	PSU     int `json:"psu"`
+	Fans    int `json:"fans"`
+	BMC     int `json:"bmc"`
+}
+
+type PSUInfo struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name,omitempty"`
+	Manufacturer       string   `json:"manufacturer,omitempty"`
+	Model              string   `json:"model,omitempty"`
+	SerialNumber       string   `json:"serial_number,omitempty"`
+	PartNumber         string   `json:"part_number,omitempty"`
+	FirmwareVersion    string   `json:"firmware_version,omitempty"`
+	PowerSupplyType    string   `json:"power_supply_type,omitempty"`
+	PowerCapacityWatts *float64 `json:"power_capacity_watts,omitempty"`
+	PowerOutputWatts   *float64 `json:"power_output_watts,omitempty"`
+	Status             string   `json:"status,omitempty"`
+	StatusState        string   `json:"status_state,omitempty"`
+	Chassis            string   `json:"chassis,omitempty"`
+	Source             string   `json:"source,omitempty"` // power | power_subsystem | chassis
+}
+
+type FanInfo struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name,omitempty"`
+	Manufacturer    string   `json:"manufacturer,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	SerialNumber    string   `json:"serial_number,omitempty"`
+	PartNumber      string   `json:"part_number,omitempty"`
+	PhysicalContext string   `json:"physical_context,omitempty"`
+	Reading         *float64 `json:"reading,omitempty"`
+	ReadingUnits    string   `json:"reading_units,omitempty"` // RPM | Percent
+	SpeedPercent    *float64 `json:"speed_percent,omitempty"`
+	SpeedRPM        *float64 `json:"speed_rpm,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	StatusState     string   `json:"status_state,omitempty"`
+	Chassis         string   `json:"chassis,omitempty"`
+	Source          string   `json:"source,omitempty"` // thermal | thermal_subsystem | chassis
+}
+
+type PCIeInfo struct {
+	ID              string `json:"id"`
+	Name            string `json:"name,omitempty"`
+	Description     string `json:"description,omitempty"`
+	Manufacturer    string `json:"manufacturer,omitempty"`
+	Model           string `json:"model,omitempty"`
+	SerialNumber    string `json:"serial_number,omitempty"`
+	PartNumber      string `json:"part_number,omitempty"`
+	SKU             string `json:"sku,omitempty"`
+	AssetTag        string `json:"asset_tag,omitempty"`
+	FirmwareVersion string `json:"firmware_version,omitempty"`
+	DeviceType      string `json:"device_type,omitempty"`
+	Status          string `json:"status,omitempty"`
+	StatusState     string `json:"status_state,omitempty"`
+	// Slot / link details when the BMC exposes them.
+	SlotID       string `json:"slot_id,omitempty"`
+	SlotType     string `json:"slot_type,omitempty"`
+	PCIeType     string `json:"pcie_type,omitempty"`
+	MaxPCIeType  string `json:"max_pcie_type,omitempty"`
+	LanesInUse   int    `json:"lanes_in_use,omitempty"`
+	MaxLanes     int    `json:"max_lanes,omitempty"`
+	IsGPU        bool   `json:"is_gpu"`
+	Chassis      string `json:"chassis,omitempty"`
+	Source       string `json:"source,omitempty"` // system | chassis
 }
 
 type SystemInfo struct {
@@ -211,6 +289,9 @@ func (c *Client) Inventory(t Target) (*SystemInventory, error) {
 		Storage: []DriveInfo{},
 		Network: []NICInfo{},
 		GPU:     []GPUInfo{},
+		PCIe:    []PCIeInfo{},
+		PSU:     []PSUInfo{},
+		Fans:    []FanInfo{},
 		BMC:     []BMCInfo{},
 	}
 
@@ -300,41 +381,52 @@ func (c *Client) Inventory(t Target) (*SystemInventory, error) {
 		}
 	}
 
-	if devices, err := sys.PCIeDevices(); err == nil {
-		for _, d := range devices {
-			if !looksLikeGPU(d.Name, d.Model, d.Description) {
-				continue
-			}
-			key := "pcie:" + d.ID
-			if _, ok := gpuSeen[key]; ok {
-				continue
-			}
-			// Skip if we already have the same model from processors/gfx.
-			dup := false
-			for _, g := range inv.GPU {
-				if g.Model != "" && g.Model == d.Model {
-					dup = true
-					break
-				}
-			}
-			if dup {
-				continue
-			}
-			gpuSeen[key] = struct{}{}
-			inv.GPU = append(inv.GPU, GPUInfo{
-				ID:           d.ID,
-				Name:         d.Name,
-				Manufacturer: d.Manufacturer,
-				Model:        d.Model,
-				SerialNumber: d.SerialNumber,
-				PartNumber:   d.PartNumber,
-				Source:       "pcie",
-			})
+	inv.PCIe = collectPCIe(api, sys)
+	for _, d := range inv.PCIe {
+		if !d.IsGPU {
+			continue
 		}
+		key := "pcie:" + d.ID
+		if _, ok := gpuSeen[key]; ok {
+			continue
+		}
+		dup := false
+		for _, g := range inv.GPU {
+			if g.Model != "" && g.Model == d.Model {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		gpuSeen[key] = struct{}{}
+		inv.GPU = append(inv.GPU, GPUInfo{
+			ID:           d.ID,
+			Name:         d.Name,
+			Manufacturer: d.Manufacturer,
+			Model:        d.Model,
+			SerialNumber: d.SerialNumber,
+			PartNumber:   d.PartNumber,
+			Source:       "pcie",
+		})
 	}
 
 	inv.Storage = collectDrives(api, systems)
 	inv.BMC = collectBMC(api)
+	inv.PSU = collectPSU(api)
+	inv.Fans = collectFans(api)
+	inv.Counts = InventoryCounts{
+		CPU:     len(inv.CPU),
+		RAM:     len(inv.RAM),
+		Storage: len(inv.Storage),
+		Network: len(inv.Network),
+		GPU:     len(inv.GPU),
+		PCIe:    len(inv.PCIe),
+		PSU:     len(inv.PSU),
+		Fans:    len(inv.Fans),
+		BMC:     len(inv.BMC),
+	}
 
 	return inv, nil
 }
@@ -659,6 +751,313 @@ func parseBaySlotFromID(parts ...string) (locationType string, ordinal int, ok b
 		}
 	}
 	return "", 0, false
+}
+
+func collectPCIe(api *gofish.APIClient, sys *schemas.ComputerSystem) []PCIeInfo {
+	out := []PCIeInfo{}
+	seen := map[string]struct{}{}
+	add := func(d *schemas.PCIeDevice, chassis, source string) {
+		if d == nil {
+			return
+		}
+		key := d.ID
+		if key == "" {
+			key = d.Name + "|" + d.SerialNumber + "|" + d.Model
+		}
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		info := PCIeInfo{
+			ID:              d.ID,
+			Name:            d.Name,
+			Description:     d.Description,
+			Manufacturer:    d.Manufacturer,
+			Model:           d.Model,
+			SerialNumber:    d.SerialNumber,
+			PartNumber:      d.PartNumber,
+			SKU:             d.SKU,
+			AssetTag:        d.AssetTag,
+			FirmwareVersion: d.FirmwareVersion,
+			DeviceType:      string(d.DeviceType),
+			Status:          string(d.Status.Health),
+			StatusState:     string(d.Status.State),
+			PCIeType:        string(d.PCIeInterface.PCIeType),
+			MaxPCIeType:     string(d.PCIeInterface.MaxPCIeType),
+			LanesInUse:      derefInt(d.PCIeInterface.LanesInUse),
+			MaxLanes:        derefInt(d.PCIeInterface.MaxLanes),
+			IsGPU:           looksLikeGPU(d.Name, d.Model, d.Description, d.Manufacturer),
+			Chassis:         chassis,
+			Source:          source,
+		}
+		if d.Slot.SlotType != "" || d.Slot.PCIeType != "" || d.Slot.Lanes != nil {
+			info.SlotType = string(d.Slot.SlotType)
+			if info.PCIeType == "" {
+				info.PCIeType = string(d.Slot.PCIeType)
+			}
+			if info.MaxLanes == 0 {
+				info.MaxLanes = derefInt(d.Slot.Lanes)
+			}
+			if sl := d.Slot.Location.PartLocation.ServiceLabel; sl != "" {
+				info.SlotID = sl
+			}
+		}
+		out = append(out, info)
+	}
+
+	if devices, err := sys.PCIeDevices(); err == nil {
+		for _, d := range devices {
+			add(d, "", "system")
+		}
+	}
+	if chassisList, err := api.Service.Chassis(); err == nil {
+		for _, ch := range chassisList {
+			label := ch.Name
+			if label == "" {
+				label = ch.ID
+			}
+			if devices, err := ch.PCIeDevices(); err == nil {
+				for _, d := range devices {
+					add(d, label, "chassis")
+				}
+			}
+		}
+	}
+	return out
+}
+
+func collectPSU(api *gofish.APIClient) []PSUInfo {
+	out := []PSUInfo{}
+	seen := map[string]struct{}{}
+	add := func(p schemas.PowerSupply, chassis, source string) {
+		key := p.MemberID
+		if key == "" {
+			key = p.ID
+		}
+		if key == "" {
+			key = p.Name + "|" + p.SerialNumber + "|" + p.Model
+		}
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		id := p.ID
+		if id == "" {
+			id = p.MemberID
+		}
+		if id == "" {
+			id = p.Name
+		}
+		info := PSUInfo{
+			ID:              id,
+			Name:            p.Name,
+			Manufacturer:    p.Manufacturer,
+			Model:           p.Model,
+			SerialNumber:    p.SerialNumber,
+			PartNumber:      p.PartNumber,
+			FirmwareVersion: p.FirmwareVersion,
+			PowerSupplyType: string(p.PowerSupplyType),
+			Status:          string(p.Status.Health),
+			StatusState:     string(p.Status.State),
+			Chassis:         chassis,
+			Source:          source,
+		}
+		if p.PowerCapacityWatts != nil {
+			v := float64(*p.PowerCapacityWatts)
+			info.PowerCapacityWatts = &v
+		}
+		if p.PowerOutputWatts != nil {
+			v := float64(*p.PowerOutputWatts)
+			info.PowerOutputWatts = &v
+		} else if p.LastPowerOutputWatts != nil {
+			v := float64(*p.LastPowerOutputWatts)
+			info.PowerOutputWatts = &v
+		}
+		out = append(out, info)
+	}
+
+	chassisList, err := api.Service.Chassis()
+	if err != nil {
+		return out
+	}
+	for _, ch := range chassisList {
+		label := ch.Name
+		if label == "" {
+			label = ch.ID
+		}
+		// Legacy Chassis.Power → PowerSupplies array (common on iLO / older iDRAC).
+		if power, err := ch.Power(); err == nil && power != nil {
+			for _, p := range power.PowerSupplies {
+				add(p, label, "power")
+			}
+		}
+		// Newer Chassis.PowerSubsystem → PowerSupply collection.
+		if ps, err := ch.PowerSubsystem(); err == nil && ps != nil {
+			if supplies, err := ps.PowerSupplies(); err == nil {
+				for _, p := range supplies {
+					if p != nil {
+						add(*p, label, "power_subsystem")
+					}
+				}
+			}
+		}
+		// Direct Chassis.PowerSupplies links (some OEMs).
+		if supplies, err := ch.PowerSupplies(); err == nil {
+			for _, p := range supplies {
+				if p != nil {
+					add(*p, label, "chassis")
+				}
+			}
+		}
+	}
+	return out
+}
+
+func collectFans(api *gofish.APIClient) []FanInfo {
+	out := []FanInfo{}
+	seen := map[string]struct{}{}
+	addThermal := func(f schemas.ThermalFan, chassis, source string) {
+		key := f.MemberID
+		if key == "" {
+			key = f.ID
+		}
+		if key == "" {
+			key = f.Name + "|" + f.SerialNumber + "|" + f.Model
+		}
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		id := f.ID
+		if id == "" {
+			id = f.MemberID
+		}
+		if id == "" {
+			id = f.Name
+			if id == "" {
+				id = f.FanName
+			}
+		}
+		info := FanInfo{
+			ID:              id,
+			Name:            firstNonEmpty(f.Name, f.FanName),
+			Manufacturer:    f.Manufacturer,
+			Model:           f.Model,
+			SerialNumber:    f.SerialNumber,
+			PartNumber:      f.PartNumber,
+			PhysicalContext: string(f.PhysicalContext),
+			ReadingUnits:    string(f.ReadingUnits),
+			Status:          string(f.Status.Health),
+			StatusState:     string(f.Status.State),
+			Chassis:         chassis,
+			Source:          source,
+		}
+		if f.Reading != nil {
+			v := float64(*f.Reading)
+			info.Reading = &v
+			switch f.ReadingUnits {
+			case schemas.RPMReadingUnits:
+				info.SpeedRPM = &v
+			case schemas.PercentReadingUnits:
+				info.SpeedPercent = &v
+			}
+		}
+		out = append(out, info)
+	}
+	addFan := func(f *schemas.Fan, chassis, source string) {
+		if f == nil {
+			return
+		}
+		key := f.ID
+		if key == "" {
+			key = f.Name + "|" + f.SerialNumber + "|" + f.Model
+		}
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		info := FanInfo{
+			ID:              f.ID,
+			Name:            f.Name,
+			Manufacturer:    f.Manufacturer,
+			Model:           f.Model,
+			SerialNumber:    f.SerialNumber,
+			PartNumber:      f.PartNumber,
+			PhysicalContext: string(f.PhysicalContext),
+			Status:          string(f.Status.Health),
+			StatusState:     string(f.Status.State),
+			Chassis:         chassis,
+			Source:          source,
+		}
+		if f.SpeedPercent.Reading != nil {
+			info.SpeedPercent = f.SpeedPercent.Reading
+			info.Reading = f.SpeedPercent.Reading
+			info.ReadingUnits = string(schemas.PercentReadingUnits)
+		}
+		if f.SpeedPercent.SpeedRPM != nil {
+			info.SpeedRPM = f.SpeedPercent.SpeedRPM
+			if info.Reading == nil {
+				info.Reading = f.SpeedPercent.SpeedRPM
+				info.ReadingUnits = string(schemas.RPMReadingUnits)
+			}
+		}
+		out = append(out, info)
+	}
+
+	chassisList, err := api.Service.Chassis()
+	if err != nil {
+		return out
+	}
+	for _, ch := range chassisList {
+		label := ch.Name
+		if label == "" {
+			label = ch.ID
+		}
+		// Legacy Chassis.Thermal → Fans array.
+		if thermal, err := ch.Thermal(); err == nil && thermal != nil {
+			for _, f := range thermal.Fans {
+				addThermal(f, label, "thermal")
+			}
+		}
+		// Newer Chassis.ThermalSubsystem → Fan collection (gofish types as ThermalFan).
+		if ts, err := ch.ThermalSubsystem(); err == nil && ts != nil {
+			if fans, err := ts.Fans(); err == nil {
+				for _, f := range fans {
+					if f != nil {
+						addThermal(*f, label, "thermal_subsystem")
+					}
+				}
+			}
+		}
+		// Direct Chassis.Fans links (Fan.v1_* resources).
+		if fans, err := ch.Fans(); err == nil {
+			for _, f := range fans {
+				addFan(f, label, "chassis")
+			}
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func looksLikeGPU(parts ...string) bool {

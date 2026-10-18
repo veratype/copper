@@ -3,7 +3,12 @@
   <div class="row">
     <div>
       <h1>{{.Server.Name}}</h1>
-      <p class="muted"><code>{{.Server.Endpoint}}</code> · user {{.Server.Username}}</p>
+      <p class="muted">
+        {{if eq .Server.Status "declared"}}<span class="badge badge-declared">declared</span>{{else}}<span class="badge badge-bound">bound</span>{{end}}
+        {{if .Server.ChassisID}} · chassis <code>{{.Server.ChassisID}}</code>{{end}}
+        · {{if .Server.Endpoint}}<code>{{.Server.Endpoint}}</code>{{else}}<em>no BMC IP yet</em>{{end}}
+        · user {{.Server.Username}}{{if .Server.MAC}} · MAC <code>{{.Server.MAC}}</code>{{end}}
+      </p>
     </div>
     <div class="actions">
       <a href="/servers/{{.Server.ID}}/edit">Edit</a>
@@ -11,6 +16,26 @@
     </div>
   </div>
 
+  {{if eq .Server.Status "declared"}}
+  <div class="panel stack">
+    <h2>Declared — verify before ops</h2>
+    {{if not .Server.Endpoint}}
+    <p class="muted">
+      No BMC IP yet. Either wait for OOB DHCP to match MAC/chassis, or
+      <a href="/servers/{{.Server.ID}}/edit">Edit</a> and set the Redfish endpoint, then Probe.
+    </p>
+    {{else}}
+    <p class="muted">
+      Endpoint is set. Probe talks to the BMC with the stored username/password.
+      On success this server becomes <strong>bound</strong> and Redfish actions unlock.
+      OOB DHCP sync can also bind automatically when a lease matches.
+    </p>
+    <form method="post" action="/servers/{{.Server.ID}}/actions/probe" class="busy" data-busy="Probing BMC…">
+      <button type="submit">Probe BMC (verify credentials)</button>
+    </form>
+    {{end}}
+  </div>
+  {{else}}
   <div class="ops">
     <form method="post" action="/servers/{{.Server.ID}}/actions/inventory" class="busy" data-busy="Fetching inventory…"><button type="submit">Inventory</button></form>
     <form method="post" action="/servers/{{.Server.ID}}/actions/boot" class="busy" data-busy="Fetching boot status…"><button type="submit">Boot status</button></form>
@@ -30,6 +55,28 @@
     <label class="check"><input type="checkbox" name="reboot" value="1" checked> Reboot after mount</label>
     <button type="submit">Mount &amp; boot</button>
   </form>
+  {{end}}
+
+  <div class="panel stack">
+    <h2>iLO / BMC MAC &amp; chassis</h2>
+    <p class="muted">MAC is used for DHCP allow lists and binding. Chassis ID comes from LLDP on the OOB plane (<code>copper_bmc</code>), or from CSV / Edit.</p>
+    <form method="post" action="/servers/{{.Server.ID}}/mac" class="stack">
+      <label>MAC address
+        <input name="mac" value="{{.Server.MAC}}" placeholder="aa:bb:cc:dd:ee:01">
+      </label>
+      <button type="submit">Save MAC</button>
+    </form>
+    <div class="actions">
+      {{if .Server.Endpoint}}
+      <form method="post" action="/servers/{{.Server.ID}}/actions/lookup-mac" class="busy" data-busy="Looking up MAC via agent…">
+        <button type="submit">Lookup MAC (ARP)</button>
+      </form>
+      {{end}}
+      <form method="post" action="/servers/{{.Server.ID}}/actions/lookup-chassis" class="busy" data-busy="Looking up chassis via LLDP…">
+        <button type="submit">Lookup chassis (LLDP)</button>
+      </form>
+    </div>
+  </div>
 
   {{if .Result}}
   <div class="row result-head">

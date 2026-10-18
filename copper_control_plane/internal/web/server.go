@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,12 +18,15 @@ import (
 	"copper_control_plane/internal/agent"
 	"copper_control_plane/internal/config"
 	"copper_control_plane/internal/store"
+
+	"copper_dhcp"
 )
 
 type Server struct {
 	cfg      *config.Config
 	store    *store.Store
 	agent    *agent.Client
+	localDHCP *copper_dhcp.Manager // data-plane DHCP running in this process
 	pages    map[string]*template.Template
 	staticFS fs.FS
 }
@@ -37,18 +42,40 @@ type pageData struct {
 	Result          string
 	ResultKind      string // inventory | boot | virtual-media | reset | mount
 	ResultFetchedAt string // RFC3339 / display time for cached snapshots
+
+	DHCP             copper_dhcp.Config
+	DHCPRole         bool
+	DHCPRunning      bool
+	AgentError       string
+	DNSJoined        string
+	AllowMACsText    string // extra MACs not tied to inventory servers
+	DenyMACsText     string
+	ReservationsText string
+	LeasesJSON       string
+	KnownMACs        []knownMAC // inventory servers with a MAC, for DHCP allow checkboxes
+
+	// CSV import
+	ImportResult *csvImportResult
+	CSVSample    string
 }
 
-func New(cfg *config.Config, st *store.Store, ag *agent.Client, templatesFS, staticFS fs.FS) (*Server, error) {
+// knownMAC is an inventory server MAC offered on the DHCP allow list.
+type knownMAC struct {
+	Name     string
+	MAC      string
+	Selected bool
+}
+
+func New(cfg *config.Config, st *store.Store, ag *agent.Client, localDHCP *copper_dhcp.Manager, templatesFS, staticFS fs.FS) (*Server, error) {
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login.html", "servers.html", "server_form.html", "server_detail.html"} {
+	for _, name := range []string{"login.html", "servers.html", "server_form.html", "server_detail.html", "server_import.html", "dhcp.html", "dhcp_data.html", "activity.html"} {
 		t, err := template.ParseFS(templatesFS, "templates/layout.html", "templates/"+name)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
 		pages[name] = t
 	}
-	return &Server{cfg: cfg, store: st, agent: ag, pages: pages, staticFS: staticFS}, nil
+	return &Server{cfg: cfg, store: st, agent: ag, localDHCP: localDHCP, pages: pages, staticFS: staticFS}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -60,20 +87,48 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /logout", s.handleLogout)
 
 	mux.Handle("GET /{$}", s.auth(s.handleIndex))
+	mux.Handle("GET /servers", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}))
 	mux.Handle("GET /servers/new", s.auth(s.handleServerNewGet))
 	mux.Handle("POST /servers/new", s.auth(s.handleServerNewPost))
+	mux.Handle("GET /servers/import", s.auth(s.handleServerImportGet))
+	mux.Handle("POST /servers/import", s.auth(s.handleServerImportPost))
+	mux.Handle("POST /servers/sync-dhcp", s.auth(s.handleServersSyncDHCP))
 	mux.Handle("GET /servers/{id}", s.auth(s.handleServerDetail))
 	mux.Handle("GET /servers/{id}/edit", s.auth(s.handleServerEditGet))
 	mux.Handle("POST /servers/{id}/edit", s.auth(s.handleServerEditPost))
 	mux.Handle("POST /servers/{id}/delete", s.auth(s.handleServerDelete))
 
+	mux.Handle("POST /servers/{id}/actions/probe", s.auth(s.handleActionProbe))
 	mux.Handle("POST /servers/{id}/actions/inventory", s.auth(s.handleActionInventory))
 	mux.Handle("POST /servers/{id}/actions/boot", s.auth(s.handleActionBoot))
 	mux.Handle("POST /servers/{id}/actions/virtual-media", s.auth(s.handleActionVirtualMedia))
 	mux.Handle("POST /servers/{id}/actions/reset", s.auth(s.handleActionReset))
 	mux.Handle("POST /servers/{id}/actions/mount", s.auth(s.handleActionMount))
+	mux.Handle("POST /servers/{id}/actions/lookup-mac", s.auth(s.handleLookupMAC))
+	mux.Handle("POST /servers/{id}/actions/lookup-chassis", s.auth(s.handleLookupChassis))
+	mux.Handle("POST /servers/{id}/mac", s.auth(s.handleSaveMAC))
 	// Same payload as Inventory action; Content-Disposition for browser download + curl -OJ.
 	mux.Handle("GET /servers/{id}/export/inventory.json", s.auth(s.handleExportInventory))
+
+	// OOB / BMC-plane DHCP (policy pushed to copper_bmc).
+	mux.Handle("GET /dhcp", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dhcp/oob", http.StatusSeeOther)
+	}))
+	mux.Handle("GET /dhcp/oob", s.auth(s.handleDHCPGet))
+	mux.Handle("POST /dhcp/oob", s.auth(s.handleDHCPSave))
+	mux.Handle("POST /dhcp/oob/push", s.auth(s.handleDHCPPush))
+	mux.Handle("POST /dhcp", s.auth(s.handleDHCPSave))             // legacy form action
+	mux.Handle("POST /dhcp/push", s.auth(s.handleDHCPPush))        // legacy
+
+	// Data-plane DHCP (runs locally in copper_control_plane; PXE next-server / boot-file).
+	mux.Handle("GET /dhcp/data", s.auth(s.handleDataDHCPGet))
+	mux.Handle("POST /dhcp/data", s.auth(s.handleDataDHCPSave))
+	mux.Handle("POST /dhcp/data/apply", s.auth(s.handleDataDHCPApply))
+
+	mux.Handle("GET /activity", s.auth(s.handleActivityPage))
+	mux.Handle("GET /api/agent/activity", s.auth(s.handleActivityAPI))
 
 	return mux
 }
@@ -119,16 +174,103 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// Best-effort: fulfill declared CSV rows from live OOB DHCP leases.
+	_ = s.reconcileOOBDHCP()
+
 	servers, err := s.store.ListServers()
 	if err != nil {
 		s.render(w, "servers.html", pageData{Title: "Servers", Authed: true, Error: err.Error(), AgentURL: s.cfg.AgentBaseURL()})
 		return
 	}
-	s.render(w, "servers.html", pageData{
+	data := pageData{
 		Title:    "Servers",
 		Authed:   true,
 		AgentURL: s.cfg.AgentBaseURL(),
 		Servers:  servers,
+	}
+	if flash := r.URL.Query().Get("flash"); flash != "" {
+		data.Flash = flash
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		data.Error = errMsg
+	}
+	s.render(w, "servers.html", data)
+}
+
+func (s *Server) handleServersSyncDHCP(w http.ResponseWriter, r *http.Request) {
+	res := s.reconcileOOBDHCP()
+	if res.Error != "" {
+		http.Redirect(w, r, "/?error="+urlQuery(res.Error), http.StatusSeeOther)
+		return
+	}
+	msg := fmt.Sprintf("OOB DHCP sync: %d lease(s), %d matched, %d updated, %d unmatched; LLDP: %d neighbor(s), %d enriched",
+		res.LeasesSeen, res.Bound, res.Updated, res.Unmatched, res.LLDPSeen, res.LLDPEnriched)
+	http.Redirect(w, r, "/?flash="+urlQuery(msg), http.StatusSeeOther)
+}
+
+const csvSample = `chassis_id,bmc_ip,mac_address,username,password
+rack1-node3,,,admin,secret
+,192.168.10.50,,root,changeme
+,,aa:bb:cc:dd:ee:01,ilo,password
+`
+
+func (s *Server) handleServerImportGet(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "server_import.html", pageData{
+		Title:     "Import servers",
+		Authed:    true,
+		CSVSample: csvSample,
+	})
+}
+
+func (s *Server) handleServerImportPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		s.render(w, "server_import.html", pageData{
+			Title: "Import servers", Authed: true, CSVSample: csvSample,
+			Error: "invalid upload: " + err.Error(),
+		})
+		return
+	}
+	file, _, err := r.FormFile("csv")
+	if err != nil {
+		s.render(w, "server_import.html", pageData{
+			Title: "Import servers", Authed: true, CSVSample: csvSample,
+			Error: "choose a CSV file",
+		})
+		return
+	}
+	defer file.Close()
+
+	rows, parseRes := parseServersCSV(file)
+	if parseRes.ParseErr != "" {
+		s.render(w, "server_import.html", pageData{
+			Title: "Import servers", Authed: true, CSVSample: csvSample,
+			Error: parseRes.ParseErr, ImportResult: &parseRes,
+		})
+		return
+	}
+	applyRes := s.applyCSVRows(rows)
+	applyRes.RowErrs = append(parseRes.RowErrs, applyRes.RowErrs...)
+
+	// Immediately try to bind against current OOB leases.
+	bind := s.reconcileOOBDHCP()
+	flash := fmt.Sprintf("Import: %d created, %d updated, %d row error(s).",
+		applyRes.Created, applyRes.Updated, len(applyRes.RowErrs))
+	if bind.Error == "" {
+		flash += fmt.Sprintf(" DHCP bind: %d matched (%d updated).", bind.Bound, bind.Updated)
+	} else {
+		flash += " DHCP bind skipped: " + bind.Error
+	}
+
+	if applyRes.Created+applyRes.Updated == 0 && len(applyRes.RowErrs) > 0 {
+		s.render(w, "server_import.html", pageData{
+			Title: "Import servers", Authed: true, CSVSample: csvSample,
+			Error: "no rows imported", ImportResult: &applyRes,
+		})
+		return
+	}
+	s.render(w, "server_import.html", pageData{
+		Title: "Import servers", Authed: true, CSVSample: csvSample,
+		Flash: flash, ImportResult: &applyRes,
 	})
 }
 
@@ -139,13 +281,22 @@ func (s *Server) handleServerNewGet(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleServerNewPost(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	srv := store.Server{
-		Name:     strings.TrimSpace(r.FormValue("name")),
-		Endpoint: strings.TrimSpace(r.FormValue("endpoint")),
-		Username: strings.TrimSpace(r.FormValue("username")),
-		Password: r.FormValue("password"),
-		Insecure: r.FormValue("insecure") == "1",
-		Notes:    strings.TrimSpace(r.FormValue("notes")),
+		Name:      strings.TrimSpace(r.FormValue("name")),
+		Endpoint:  strings.TrimSpace(r.FormValue("endpoint")),
+		Username:  strings.TrimSpace(r.FormValue("username")),
+		Password:  r.FormValue("password"),
+		Insecure:  r.FormValue("insecure") == "1",
+		ChassisID: strings.TrimSpace(r.FormValue("chassis_id")),
+		Notes:     strings.TrimSpace(r.FormValue("notes")),
+		Source:    store.SourceManual,
+		Status:    store.StatusDeclared, // Probe (or OOB DHCP bind) required before ops
 	}
+	mac, err := normalizeMACInput(r.FormValue("mac"))
+	if err != nil {
+		s.render(w, "server_form.html", pageData{Title: "Add server", Authed: true, Error: err.Error(), Server: &srv})
+		return
+	}
+	srv.MAC = mac
 	if srv.Name == "" || srv.Endpoint == "" || srv.Username == "" || srv.Password == "" {
 		s.render(w, "server_form.html", pageData{Title: "Add server", Authed: true, Error: "Name, endpoint, username and password are required", Server: &srv})
 		return
@@ -165,6 +316,12 @@ func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := pageData{Title: srv.Name, Authed: true, Server: srv}
+	if flash := r.URL.Query().Get("flash"); flash != "" {
+		data.Flash = flash
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		data.Error = errMsg
+	}
 	if snap, err := s.store.GetSnapshot(srv.ID, "inventory"); err == nil && snap != nil {
 		data.Result = snap.Payload
 		data.ResultKind = "inventory"
@@ -173,13 +330,154 @@ func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "server_detail.html", data)
 }
 
+func (s *Server) handleSaveMAC(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.serverFromPath(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	_ = r.ParseForm()
+	mac, err := normalizeMACInput(r.FormValue("mac"))
+	if err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/servers/%d?error=%s", srv.ID, urlQuery(err.Error())), http.StatusSeeOther)
+		return
+	}
+	srv.MAC = mac
+	if err := s.store.UpdateServer(*srv); err != nil {
+		http.Redirect(w, r, fmt.Sprintf("/servers/%d?error=%s", srv.ID, urlQuery(err.Error())), http.StatusSeeOther)
+		return
+	}
+	msg := "iLO MAC cleared"
+	if mac != "" {
+		msg = "iLO MAC saved: " + mac
+	}
+	http.Redirect(w, r, fmt.Sprintf("/servers/%d?flash=%s", srv.ID, urlQuery(msg)), http.StatusSeeOther)
+}
+
 func (s *Server) handleServerEditGet(w http.ResponseWriter, r *http.Request) {
 	srv, err := s.serverFromPath(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	s.render(w, "server_form.html", pageData{Title: "Edit server", Authed: true, Server: srv})
+	data := pageData{Title: "Edit server", Authed: true, Server: srv}
+	if flash := r.URL.Query().Get("flash"); flash != "" {
+		data.Flash = flash
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		data.Error = errMsg
+	}
+	s.render(w, "server_form.html", data)
+}
+
+func (s *Server) handleLookupMAC(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.serverFromPath(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	dest := fmt.Sprintf("/servers/%d", srv.ID)
+	ip, err := hostFromEndpoint(srv.Endpoint)
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	mac, err := s.agent.LookupARP(ip)
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	mac, err = normalizeMACInput(mac)
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	srv.MAC = mac
+	if err := s.store.UpdateServer(*srv); err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, dest+"?flash="+urlQuery("iLO MAC set to "+mac+" (from "+ip+")"), http.StatusSeeOther)
+}
+
+func (s *Server) handleLookupChassis(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.serverFromPath(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	dest := fmt.Sprintf("/servers/%d", srv.ID)
+
+	mac := strings.TrimSpace(srv.MAC)
+	ip := ""
+	if host, err := hostFromEndpoint(srv.Endpoint); err == nil {
+		ip = host
+	}
+	if mac == "" && ip == "" && strings.TrimSpace(srv.ChassisID) == "" {
+		http.Redirect(w, r, dest+"?error="+urlQuery("need MAC, endpoint IP, or existing chassis id for LLDP lookup"), http.StatusSeeOther)
+		return
+	}
+
+	n, err := s.agent.LookupLLDP(mac, ip, srv.ChassisID)
+	if err != nil && mac == "" && ip != "" {
+		// Fall back: ARP the IP, then LLDP by MAC.
+		if resolved, aerr := s.agent.LookupARP(ip); aerr == nil {
+			if hw, nerr := normalizeMACInput(resolved); nerr == nil && hw != "" {
+				mac = hw
+				n, err = s.agent.LookupLLDP(mac, "", "")
+			}
+		}
+	}
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	changed, err := s.store.EnrichFromLLDP(srv, n.ChassisID, n.SrcMAC, n.MgmtAddrs)
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	msg := "LLDP: no fields to update (already set)"
+	if changed {
+		msg = "LLDP chassis set to " + n.ChassisID
+		if n.SrcMAC != "" {
+			msg += " (src MAC " + n.SrcMAC + ")"
+		}
+	}
+	http.Redirect(w, r, dest+"?flash="+urlQuery(msg), http.StatusSeeOther)
+}
+
+func hostFromEndpoint(endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", fmt.Errorf("endpoint is empty")
+	}
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid endpoint: %w", err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("endpoint has no host")
+	}
+	if net.ParseIP(host) == nil {
+		// Hostname: still try as-is; ARP needs an IP. Resolve A record.
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", host, err)
+		}
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				return v4.String(), nil
+			}
+		}
+		return "", fmt.Errorf("no IPv4 for %s", host)
+	}
+	return host, nil
 }
 
 func (s *Server) handleServerEditPost(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +494,14 @@ func (s *Server) handleServerEditPost(w http.ResponseWriter, r *http.Request) {
 		srv.Password = pw
 	}
 	srv.Insecure = r.FormValue("insecure") == "1"
+	srv.ChassisID = strings.TrimSpace(r.FormValue("chassis_id"))
 	srv.Notes = strings.TrimSpace(r.FormValue("notes"))
+	mac, err := normalizeMACInput(r.FormValue("mac"))
+	if err != nil {
+		s.render(w, "server_form.html", pageData{Title: "Edit server", Authed: true, Server: srv, Error: err.Error()})
+		return
+	}
+	srv.MAC = mac
 	if err := s.store.UpdateServer(*srv); err != nil {
 		s.render(w, "server_form.html", pageData{Title: "Edit server", Authed: true, Server: srv, Error: err.Error()})
 		return
@@ -212,6 +517,42 @@ func (s *Server) handleServerDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.DeleteServer(id)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleActionProbe(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.serverFromPath(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	dest := fmt.Sprintf("/servers/%d", srv.ID)
+	if strings.TrimSpace(srv.Endpoint) == "" {
+		http.Redirect(w, r, dest+"?error="+urlQuery("set a BMC IP / Redfish endpoint first (Edit), then Probe"), http.StatusSeeOther)
+		return
+	}
+	raw, err := s.agent.Probe(srv)
+	if err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery("probe failed: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	srv.Status = store.StatusBound
+	if err := s.store.UpdateServer(*srv); err != nil {
+		http.Redirect(w, r, dest+"?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	// Show a short probe payload for confirmation.
+	formatted := string(raw)
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err == nil {
+		if pretty, err := json.MarshalIndent(parsed, "", "  "); err == nil {
+			formatted = string(pretty)
+		}
+	}
+	s.render(w, "server_detail.html", pageData{
+		Title: srv.Name, Authed: true, Server: srv,
+		Flash: "Probe OK — credentials work; server is now bound.",
+		Result: formatted, ResultKind: "probe",
+	})
 }
 
 func (s *Server) handleActionInventory(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +623,20 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request, kind string, 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	if srv.Status == store.StatusDeclared {
+		s.render(w, "server_detail.html", pageData{
+			Title: srv.Name, Authed: true, Server: srv,
+			Error: "server is still declared — Probe with credentials (or wait for OOB DHCP bind) before Redfish actions",
+		})
+		return
+	}
+	if strings.TrimSpace(srv.Endpoint) == "" {
+		s.render(w, "server_detail.html", pageData{
+			Title: srv.Name, Authed: true, Server: srv,
+			Error: "no BMC endpoint yet — set an IP and Probe, or wait for OOB DHCP bind",
+		})
+		return
+	}
 	raw, err := fn(srv)
 	if err != nil {
 		s.render(w, "server_detail.html", pageData{Title: srv.Name, Authed: true, Server: srv, Error: err.Error()})
@@ -330,6 +685,375 @@ func sanitizeFilename(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-._")
+}
+
+func (s *Server) handleDHCPGet(w http.ResponseWriter, r *http.Request) {
+	data := s.dhcpPageData("")
+	if flash := r.URL.Query().Get("flash"); flash != "" {
+		data.Flash = flash
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		data.Error = errMsg
+	}
+	s.render(w, "dhcp.html", data)
+}
+
+func (s *Server) handleActivityPage(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "activity.html", pageData{
+		Title:    "Agent activity",
+		Authed:   true,
+		AgentURL: s.cfg.AgentBaseURL(),
+	})
+}
+
+func (s *Server) handleActivityAPI(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var since uint64
+	if v := strings.TrimSpace(q.Get("since")); v != "" {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid since", http.StatusBadRequest)
+			return
+		}
+		since = n
+	}
+	limit := 200
+	if v := strings.TrimSpace(q.Get("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+	component := strings.TrimSpace(q.Get("component"))
+
+	out, err := s.agent.Activity(since, limit, component)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) handleDHCPSave(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	cfg := dhcpFromForm(r, false)
+	cfg.NextServer = ""
+	cfg.BootFile = ""
+	if err := s.store.SaveAgentDHCPConfig(cfg); err != nil {
+		data := s.dhcpPageData("")
+		data.Error = err.Error()
+		data.DHCP = cfg
+		s.fillDHCPFormTexts(&data)
+		s.render(w, "dhcp.html", data)
+		return
+	}
+	if err := s.pushDHCP(cfg); err != nil {
+		http.Redirect(w, r, "/dhcp/oob?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery("Saved and pushed to agent"), http.StatusSeeOther)
+}
+
+func (s *Server) handleDHCPPush(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetAgentDHCPConfig()
+	if err != nil {
+		http.Redirect(w, r, "/dhcp/oob?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if err := s.pushDHCP(cfg); err != nil {
+		http.Redirect(w, r, "/dhcp/oob?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery("Pushed to agent"), http.StatusSeeOther)
+}
+
+func (s *Server) handleDataDHCPGet(w http.ResponseWriter, r *http.Request) {
+	data := s.dataDHCPPageData("")
+	if flash := r.URL.Query().Get("flash"); flash != "" {
+		data.Flash = flash
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		data.Error = errMsg
+	}
+	s.render(w, "dhcp_data.html", data)
+}
+
+func (s *Server) handleDataDHCPSave(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	cfg := dhcpFromForm(r, true)
+	if err := s.store.SaveLocalDHCPConfig(cfg); err != nil {
+		data := s.dataDHCPPageData("")
+		data.Error = err.Error()
+		data.DHCP = cfg
+		s.fillDataDHCPFormTexts(&data)
+		s.render(w, "dhcp_data.html", data)
+		return
+	}
+	if err := s.applyLocalDHCP(cfg); err != nil {
+		http.Redirect(w, r, "/dhcp/data?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dhcp/data?flash="+urlQuery("Saved and applied on this host"), http.StatusSeeOther)
+}
+
+func (s *Server) handleDataDHCPApply(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetLocalDHCPConfig()
+	if err != nil {
+		http.Redirect(w, r, "/dhcp/data?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if err := s.applyLocalDHCP(cfg); err != nil {
+		http.Redirect(w, r, "/dhcp/data?error="+urlQuery(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/dhcp/data?flash="+urlQuery("Applied on this host"), http.StatusSeeOther)
+}
+
+func (s *Server) applyLocalDHCP(cfg copper_dhcp.Config) error {
+	if s.localDHCP == nil {
+		return fmt.Errorf("local DHCP manager is not initialized")
+	}
+	return s.localDHCP.Apply(cfg)
+}
+
+func (s *Server) dataDHCPPageData(errMsg string) pageData {
+	cfg, _ := s.store.GetLocalDHCPConfig()
+	if cfg.Listen == "" {
+		cfg.Listen = "0.0.0.0:67"
+	}
+	if cfg.LeaseTime == "" {
+		cfg.LeaseTime = "1h"
+	}
+	data := pageData{
+		Title:  "Data DHCP",
+		Authed: true,
+		Error:  errMsg,
+		DHCP:   cfg,
+	}
+	s.fillDataDHCPFormTexts(&data)
+
+	if s.localDHCP != nil {
+		st := s.localDHCP.Status()
+		data.DHCPRunning = st.Running
+		leases := s.localDHCP.Leases()
+		if b, err := json.MarshalIndent(map[string]any{"leases": leases}, "", "  "); err == nil {
+			data.LeasesJSON = string(b)
+		}
+	}
+	return data
+}
+
+func (s *Server) pushDHCP(cfg copper_dhcp.Config) error {
+	role, err := s.agent.DHCPRoleEnabled()
+	if err != nil {
+		return fmt.Errorf("agent health: %w", err)
+	}
+	if !role {
+		return fmt.Errorf("agent DHCP role is disabled — restart copper_bmc and enable the DHCP role")
+	}
+	// OOB agent DHCP is addressing-only; never push PXE options even if
+	// an older saved config still has them.
+	cfg.NextServer = ""
+	cfg.BootFile = ""
+	_, err = s.agent.PutDHCPConfig(cfg)
+	return err
+}
+
+func (s *Server) dhcpPageData(errMsg string) pageData {
+	cfg, _ := s.store.GetAgentDHCPConfig()
+	if cfg.Listen == "" {
+		cfg.Listen = "0.0.0.0:67"
+	}
+	if cfg.LeaseTime == "" {
+		cfg.LeaseTime = "1h"
+	}
+	data := pageData{
+		Title:  "OOB DHCP",
+		Authed: true,
+		Error:  errMsg,
+		DHCP:   cfg,
+	}
+	s.fillDHCPFormTexts(&data)
+
+	role, err := s.agent.DHCPRoleEnabled()
+	if err != nil {
+		data.AgentError = err.Error()
+	} else {
+		data.DHCPRole = role
+		if role {
+			if st, err := s.agent.GetDHCPConfig(); err == nil {
+				if running, ok := st["running"].(bool); ok {
+					data.DHCPRunning = running
+				}
+			}
+			if leases, err := s.agent.DHCPLeases(); err == nil {
+				if b, err := json.MarshalIndent(leases, "", "  "); err == nil {
+					data.LeasesJSON = string(b)
+				}
+			}
+		}
+	}
+	return data
+}
+
+func (s *Server) fillDHCPFormTexts(data *pageData) {
+	s.fillDHCPCommonTexts(data)
+
+	selected := map[string]struct{}{}
+	for _, m := range data.DHCP.AllowMACs {
+		if k, err := normalizeMACInput(m); err == nil && k != "" {
+			selected[strings.ToLower(k)] = struct{}{}
+		}
+	}
+
+	servers, _ := s.store.ListServers()
+	knownKeys := map[string]struct{}{}
+	data.KnownMACs = nil
+	for _, srv := range servers {
+		mac, err := normalizeMACInput(srv.MAC)
+		if err != nil || mac == "" {
+			continue
+		}
+		key := strings.ToLower(mac)
+		knownKeys[key] = struct{}{}
+		_, ok := selected[key]
+		data.KnownMACs = append(data.KnownMACs, knownMAC{
+			Name:     srv.Name,
+			MAC:      mac,
+			Selected: ok,
+		})
+	}
+
+	var extra []string
+	for _, m := range data.DHCP.AllowMACs {
+		mac, err := normalizeMACInput(m)
+		if err != nil || mac == "" {
+			continue
+		}
+		if _, known := knownKeys[strings.ToLower(mac)]; !known {
+			extra = append(extra, mac)
+		}
+	}
+	data.AllowMACsText = strings.Join(extra, "\n")
+}
+
+// fillDataDHCPFormTexts keeps the full allow list in the textarea (data NICs,
+// not inventory BMC MACs).
+func (s *Server) fillDataDHCPFormTexts(data *pageData) {
+	s.fillDHCPCommonTexts(data)
+	data.KnownMACs = nil
+	var allow []string
+	for _, m := range data.DHCP.AllowMACs {
+		mac, err := normalizeMACInput(m)
+		if err != nil || mac == "" {
+			continue
+		}
+		allow = append(allow, mac)
+	}
+	data.AllowMACsText = strings.Join(allow, "\n")
+}
+
+func (s *Server) fillDHCPCommonTexts(data *pageData) {
+	data.DNSJoined = strings.Join(data.DHCP.DNS, ", ")
+	data.DenyMACsText = strings.Join(data.DHCP.DenyMACs, "\n")
+	var resLines []string
+	for _, r := range data.DHCP.Reservations {
+		resLines = append(resLines, r.MAC+","+r.IP)
+	}
+	data.ReservationsText = strings.Join(resLines, "\n")
+}
+
+// dhcpFromForm parses shared DHCP fields. When withPXE is true (data plane),
+// next-server and boot-file are included; OOB agent DHCP leaves them empty.
+func dhcpFromForm(r *http.Request, withPXE bool) copper_dhcp.Config {
+	cfg := copper_dhcp.Config{
+		Enabled:    r.FormValue("enabled") == "1",
+		Interface:  strings.TrimSpace(r.FormValue("interface")),
+		Listen:     strings.TrimSpace(r.FormValue("listen")),
+		ServerIP:   strings.TrimSpace(r.FormValue("server_ip")),
+		SubnetCIDR: strings.TrimSpace(r.FormValue("subnet")),
+		RangeStart: strings.TrimSpace(r.FormValue("range_start")),
+		RangeEnd:   strings.TrimSpace(r.FormValue("range_end")),
+		Gateway:    strings.TrimSpace(r.FormValue("gateway")),
+		LeaseTime:  strings.TrimSpace(r.FormValue("lease_time")),
+		AllowAll:   r.FormValue("allow_all") == "1",
+	}
+	if withPXE {
+		cfg.NextServer = strings.TrimSpace(r.FormValue("next_server"))
+		cfg.BootFile = strings.TrimSpace(r.FormValue("boot_file"))
+	}
+	for _, part := range strings.Split(r.FormValue("dns"), ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			cfg.DNS = append(cfg.DNS, part)
+		}
+	}
+
+	seen := map[string]struct{}{}
+	addMAC := func(raw string) {
+		mac, err := normalizeMACInput(raw)
+		if err != nil || mac == "" {
+			return
+		}
+		key := strings.ToLower(mac)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		cfg.AllowMACs = append(cfg.AllowMACs, mac)
+	}
+	for _, m := range r.Form["allow_mac_known"] {
+		addMAC(m)
+	}
+	for _, m := range splitLines(r.FormValue("allow_macs_extra")) {
+		addMAC(m)
+	}
+
+	cfg.DenyMACs = splitLines(r.FormValue("deny_macs"))
+	for _, line := range splitLines(r.FormValue("reservations")) {
+		mac, ip, ok := strings.Cut(line, ",")
+		if !ok {
+			continue
+		}
+		cfg.Reservations = append(cfg.Reservations, copper_dhcp.Reservation{
+			MAC: strings.TrimSpace(mac),
+			IP:  strings.TrimSpace(ip),
+		})
+	}
+	return cfg
+}
+
+// normalizeMACInput accepts empty (optional) or a parseable MAC; returns canonical form.
+func normalizeMACInput(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	hw, err := net.ParseMAC(s)
+	if err != nil {
+		return "", fmt.Errorf("invalid MAC %q", s)
+	}
+	return hw.String(), nil
+}
+
+func splitLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func urlQuery(s string) string {
+	return url.QueryEscape(s)
 }
 
 func (s *Server) serverFromPath(r *http.Request) (*store.Server, error) {

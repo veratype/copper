@@ -2,23 +2,24 @@ package media
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"copper_bmc/internal/activity"
 	"copper_bmc/internal/config"
 )
 
 // Server serves virtual-media files on the OOB / BMC network plane.
 type Server struct {
 	cfg *config.Config
+	act *activity.Buffer
 }
 
-func New(cfg *config.Config) *Server {
-	return &Server{cfg: cfg}
+func New(cfg *config.Config, act *activity.Buffer) *Server {
+	return &Server{cfg: cfg, act: act}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -27,7 +28,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[media] %s %s %s", r.RemoteAddr, r.Method, r.URL.Path)
+		s.act.Info("media", "%s %s %s", r.RemoteAddr, r.Method, r.URL.Path)
 
 		w.Header().Set("Cache-Control", "no-store")
 		if isDownloadableFile(s.cfg.MediaFolder, r.URL.Path) {
@@ -44,7 +45,7 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return fmt.Errorf("media listen on %s: %w", s.cfg.MediaListener.Addr(), err)
 	}
-	log.Printf("[media] serving %s on http://%s/ (OOB/BMC plane, NIC=%s)",
+	s.act.Info("media", "serving %s on http://%s/ (OOB/BMC plane, NIC=%s)",
 		s.cfg.MediaFolder, s.cfg.MediaListener.Addr(), s.cfg.MediaListener.Interface)
 	return http.Serve(ln, s.Handler())
 }

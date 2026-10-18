@@ -1,0 +1,102 @@
+{{define "content"}}
+<section class="row">
+  <div>
+    <h1>OOB DHCP</h1>
+    <p class="muted">OOB/BMC-plane addressing only — policy is pushed to <code>copper_bmc</code>, which hands BMCs an IP on the management network. PXE next-server / boot-file live on <a href="/dhcp/data">Data DHCP</a>.</p>
+  </div>
+</section>
+
+{{if not .DHCPRole}}
+<p class="error">Agent DHCP role is <strong>not</strong> enabled{{if .AgentError}} ({{.AgentError}}){{else}} — restart <code>copper_bmc</code> and answer yes to the DHCP role prompt{{end}}.</p>
+{{else}}
+<p class="flash">Agent DHCP role is enabled. Running: <strong>{{if .DHCPRunning}}yes{{else}}no{{end}}</strong></p>
+{{end}}
+
+<form method="post" action="/dhcp/oob" class="stack narrow">
+  <label class="check"><input type="checkbox" name="enabled" value="1" {{if .DHCP.Enabled}}checked{{end}}> Serve DHCP with this config</label>
+
+  <label>Interface (NIC name, optional)
+    <input name="interface" value="{{.DHCP.Interface}}" placeholder="eth0">
+  </label>
+  <label>Listen
+    <input name="listen" value="{{.DHCP.Listen}}" placeholder="0.0.0.0:67">
+  </label>
+  <label>Server IP (DHCP identifier)
+    <input name="server_ip" value="{{.DHCP.ServerIP}}" required placeholder="192.168.10.2">
+  </label>
+  <label>Subnet (CIDR)
+    <input name="subnet" value="{{.DHCP.SubnetCIDR}}" required placeholder="192.168.10.0/24">
+  </label>
+  <label>Pool start
+    <input name="range_start" value="{{.DHCP.RangeStart}}" required placeholder="192.168.10.100">
+  </label>
+  <label>Pool end
+    <input name="range_end" value="{{.DHCP.RangeEnd}}" required placeholder="192.168.10.120">
+  </label>
+  <label>Gateway
+    <input name="gateway" value="{{.DHCP.Gateway}}" placeholder="192.168.10.1">
+  </label>
+  <label>DNS (comma-separated)
+    <input name="dns" value="{{.DNSJoined}}" placeholder="1.1.1.1, 8.8.8.8">
+  </label>
+  <label>Lease time
+    <input name="lease_time" value="{{.DHCP.LeaseTime}}" placeholder="1h">
+  </label>
+
+  <label class="check"><input type="checkbox" name="allow_all" value="1" {{if .DHCP.AllowAll}}checked{{end}}> Allow all MACs (ignore allow list)</label>
+
+  <fieldset class="mac-pick">
+    <legend>Allow MACs from inventory</legend>
+    <p class="muted">Servers that have a MAC set. Check to allow them on DHCP.</p>
+    {{if .KnownMACs}}
+    <div class="mac-list">
+      {{range .KnownMACs}}
+      <label class="check">
+        <input type="checkbox" name="allow_mac_known" value="{{.MAC}}" {{if .Selected}}checked{{end}}>
+        <span>{{.Name}} — <code>{{.MAC}}</code></span>
+      </label>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="muted">No inventory servers have a MAC yet. Add MACs on the Servers pages.</p>
+    {{end}}
+  </fieldset>
+
+  <label>Additional allow MACs (not in inventory, one per line)
+    <textarea name="allow_macs_extra" rows="3" placeholder="aa:bb:cc:dd:ee:01">{{.AllowMACsText}}</textarea>
+  </label>
+  <label>Deny MACs (one per line)
+    <textarea name="deny_macs" rows="3">{{.DenyMACsText}}</textarea>
+  </label>
+  <label>Reservations (mac,ip per line)
+    <textarea name="reservations" rows="4" placeholder="aa:bb:cc:dd:ee:99,192.168.10.50">{{.ReservationsText}}</textarea>
+  </label>
+
+  <div class="actions">
+    <button type="submit">Save &amp; push to agent</button>
+    <button type="submit" formaction="/dhcp/oob/push" formmethod="post">Push saved config only</button>
+  </div>
+</form>
+
+{{if .LeasesJSON}}
+<section style="margin-top:2rem">
+  <h2>Leases on agent</h2>
+  <pre class="result">{{.LeasesJSON}}</pre>
+</section>
+{{end}}
+
+<section class="activity-panel" style="margin-top:2rem">
+  <div class="row result-head">
+    <div>
+      <h2>DHCP activity on agent</h2>
+      <p class="muted cache-meta">Live from copper_bmc — offers, ACKs, filters, config apply.</p>
+    </div>
+    <span class="muted activity-status" id="activity-status">connecting…</span>
+  </div>
+  <pre class="activity-console" id="activity-console"
+       data-activity-url="/api/agent/activity"
+       data-component="dhcp"
+       data-poll-ms="2000"
+       aria-live="polite"></pre>
+</section>
+{{end}}

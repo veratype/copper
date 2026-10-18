@@ -1,0 +1,43 @@
+{{define "content"}}
+<section class="narrow">
+  <h1>Import servers (CSV)</h1>
+  <p class="muted">
+    Declared inventory only — rows are not assumed online. Bind later by
+    <strong>Probe</strong> (Redfish with the imported user/pass once a BMC IP is known)
+    or by OOB DHCP on <code>copper_bmc</code> matching MAC / BMC IP. Until bound,
+    Inventory / Boot / Virtual media / Reboot stay locked.
+  </p>
+
+  <div class="panel stack">
+    <h2>Required columns</h2>
+    <pre class="result">{{.CSVSample}}</pre>
+    <p class="muted">
+      <code>username</code> and <code>password</code> are required.
+      Each row also needs <strong>at least one</strong> of <code>chassis_id</code>, <code>bmc_ip</code>, or <code>mac_address</code>
+      (the other identity fields may be empty).
+    </p>
+  </div>
+
+  <form method="post" action="/servers/import" enctype="multipart/form-data" class="stack panel">
+    <label>CSV file
+      <input type="file" name="csv" accept=".csv,text/csv" required>
+    </label>
+    <button type="submit">Import</button>
+  </form>
+
+  {{if .ImportResult}}
+  <div class="panel">
+    <h2>Result</h2>
+    <p>Created: {{.ImportResult.Created}} · Updated: {{.ImportResult.Updated}} · Row errors: {{len .ImportResult.RowErrs}}</p>
+    {{if .ImportResult.RowErrs}}
+    <ul class="import-errors">
+      {{range .ImportResult.RowErrs}}
+      <li>Line {{.Line}}: {{.Err}}</li>
+      {{end}}
+    </ul>
+    {{end}}
+    <p><a href="/">Back to servers</a></p>
+  </div>
+  {{end}}
+</section>
+{{end}}

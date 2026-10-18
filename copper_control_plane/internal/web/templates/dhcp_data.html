@@ -1,0 +1,84 @@
+{{define "content"}}
+<section class="row">
+  <div>
+    <h1>Data DHCP</h1>
+    <p class="muted">DHCPv4 for the <strong>data NIC</strong> runs in <code>copper_control_plane</code> (shared <code>copper_dhcp</code> library). This is where PXE clients learn <em>where</em> to boot from and <em>what</em> file to load. Needs root or <code>CAP_NET_BIND_SERVICE</code> for port 67.</p>
+  </div>
+</section>
+
+{{if .DHCPRunning}}
+<p class="flash">Data DHCP is <strong>running</strong> on this host.</p>
+{{else}}
+<p class="muted">Data DHCP is not running. Enable below and save to start the listener.</p>
+{{end}}
+
+<form method="post" action="/dhcp/data" class="stack narrow">
+  <label class="check"><input type="checkbox" name="enabled" value="1" {{if .DHCP.Enabled}}checked{{end}}> Serve DHCP with this config</label>
+
+  <label>Interface (NIC name, optional)
+    <input name="interface" value="{{.DHCP.Interface}}" placeholder="eth0">
+  </label>
+  <label>Listen
+    <input name="listen" value="{{.DHCP.Listen}}" placeholder="0.0.0.0:67">
+  </label>
+  <label>Server IP (DHCP identifier, option 54)
+    <input name="server_ip" value="{{.DHCP.ServerIP}}" required placeholder="10.0.0.2">
+  </label>
+  <label>Subnet (CIDR)
+    <input name="subnet" value="{{.DHCP.SubnetCIDR}}" required placeholder="10.0.0.0/24">
+  </label>
+  <label>Pool start
+    <input name="range_start" value="{{.DHCP.RangeStart}}" required placeholder="10.0.0.100">
+  </label>
+  <label>Pool end
+    <input name="range_end" value="{{.DHCP.RangeEnd}}" required placeholder="10.0.0.200">
+  </label>
+  <label>Gateway
+    <input name="gateway" value="{{.DHCP.Gateway}}" placeholder="10.0.0.1">
+  </label>
+  <label>DNS (comma-separated)
+    <input name="dns" value="{{.DNSJoined}}" placeholder="1.1.1.1, 8.8.8.8">
+  </label>
+  <label>Lease time
+    <input name="lease_time" value="{{.DHCP.LeaseTime}}" placeholder="1h">
+  </label>
+
+  <fieldset class="mac-pick">
+    <legend>PXE boot (next-server + boot file)</legend>
+    <p class="muted">Two halves of the same instruction to a PXE client: <strong>next-server</strong> is where to go; <strong>boot file</strong> is what to download from there.</p>
+    <label>Next-server (siaddr / option 66)
+      <input name="next_server" value="{{.DHCP.NextServer}}" placeholder="10.0.0.5 — TFTP/HTTP host; empty → server IP">
+    </label>
+    <p class="muted cache-meta">IP of the machine holding boot files (often a TFTP server). Does not have to be this DHCP host. Sent as DHCP siaddr and option 66 so picky firmware still finds it. If unset, many clients fall back to the DHCP server IP.</p>
+    <label>Boot file (option 67 / filename)
+      <input name="boot_file" value="{{.DHCP.BootFile}}" placeholder="ipxe.efi or http://10.0.0.5/boot.ipxe">
+    </label>
+    <p class="muted cache-meta">Path or name the client downloads — e.g. <code>pxelinux.0</code>, <code>undionly.kpxe</code>, <code>ipxe.efi</code>, or an HTTP URL for iPXE/UEFI HTTP Boot. With a URL, the client takes the host from the URL; next-server still matters for the first-stage TFTP load.</p>
+  </fieldset>
+
+  <label class="check"><input type="checkbox" name="allow_all" value="1" {{if .DHCP.AllowAll}}checked{{end}}> Allow all MACs (ignore allow list)</label>
+
+  <label>Allow MACs (data NIC MACs, one per line)
+    <textarea name="allow_macs_extra" rows="4" placeholder="aa:bb:cc:dd:ee:01">{{.AllowMACsText}}</textarea>
+  </label>
+  <p class="muted cache-meta">These should be host <em>data</em> NIC MACs (the ones that PXE), not BMC/OOB MACs from inventory.</p>
+  <label>Deny MACs (one per line)
+    <textarea name="deny_macs" rows="3">{{.DenyMACsText}}</textarea>
+  </label>
+  <label>Reservations (mac,ip per line)
+    <textarea name="reservations" rows="4" placeholder="aa:bb:cc:dd:ee:99,10.0.0.50">{{.ReservationsText}}</textarea>
+  </label>
+
+  <div class="actions">
+    <button type="submit">Save &amp; apply</button>
+    <button type="submit" formaction="/dhcp/data/apply" formmethod="post">Apply saved config only</button>
+  </div>
+</form>
+
+{{if .LeasesJSON}}
+<section style="margin-top:2rem">
+  <h2>Leases on this host</h2>
+  <pre class="result">{{.LeasesJSON}}</pre>
+</section>
+{{end}}
+{{end}}

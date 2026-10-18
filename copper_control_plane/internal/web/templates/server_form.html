@@ -1,12 +1,21 @@
 {{define "content"}}
 <section class="narrow">
   <h1>{{if .Server}}Edit{{else}}Add{{end}} server</h1>
+  {{if not .Server}}
+  <p class="muted">Saving creates a <strong>declared</strong> server. Open it and use <strong>Probe</strong> (or wait for OOB DHCP) to bind before Inventory / Boot / Reboot unlock.</p>
+  {{end}}
   <form method="post" action="{{if .Server}}/servers/{{.Server.ID}}/edit{{else}}/servers/new{{end}}" class="stack">
     <label>Name
       <input name="name" required value="{{if .Server}}{{.Server.Name}}{{end}}" placeholder="rack1-node3">
     </label>
-    <label>Redfish endpoint
-      <input name="endpoint" required value="{{if .Server}}{{.Server.Endpoint}}{{end}}" placeholder="https://192.168.0.100">
+    <label>Chassis ID
+      <input name="chassis_id" value="{{if .Server}}{{.Server.ChassisID}}{{end}}" placeholder="optional asset / chassis id">
+    </label>
+    <label>Redfish / iLO endpoint
+      <input name="endpoint" {{if not .Server}}required{{end}} value="{{if .Server}}{{.Server.Endpoint}}{{end}}" placeholder="https://192.168.0.100">
+    </label>
+    <label>iLO / BMC MAC
+      <input name="mac" value="{{if .Server}}{{.Server.MAC}}{{end}}" placeholder="aa:bb:cc:dd:ee:01">
     </label>
     <label>BMC username
       <input name="username" required value="{{if .Server}}{{.Server.Username}}{{end}}">
@@ -23,5 +32,13 @@
     </label>
     <button type="submit">Save</button>
   </form>
+
+  {{if .Server}}
+  <form method="post" action="/servers/{{.Server.ID}}/actions/lookup-mac" class="stack panel busy" data-busy="Looking up MAC via agent…" style="margin-top:1.25rem">
+    <h2>Resolve iLO MAC from IP</h2>
+    <p class="muted">Uses <code>copper_bmc</code> on the OOB network to ARP the endpoint host (IP → MAC). Edit the endpoint above and Save first if you changed it.</p>
+    <button type="submit">Lookup MAC from endpoint IP</button>
+  </form>
+  {{end}}
 </section>
 {{end}}

@@ -15,8 +15,8 @@ type Config struct {
 	MasterPassword string `yaml:"master_password"`
 	Listen         string `yaml:"listen"`
 	Database       string `yaml:"database"`
-	CopperBMCHost   string `yaml:"copper_bmc_host"`
-	CopperBMCPort   int    `yaml:"copper_bmc_port"`
+	CopperBMCHost  string `yaml:"copper_bmc_host"`
+	CopperBMCPort  int    `yaml:"copper_bmc_port"`
 }
 
 func Load(path string) (*Config, error) {

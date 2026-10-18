@@ -10,3 +10,7 @@ database: "data/control_plane.db"
 # Optional: pre-set copper_bmc agent. If empty, CLI asks at startup.
 # copper_bmc_host: "192.168.10.20"
 # copper_bmc_port: 9090
+
+# DHCP is configured in the Web UI, not here:
+#   /dhcp/oob  — OOB/BMC addressing; push to copper_bmc (enable DHCP role on agent)
+#   /dhcp/data — data NIC + PXE next-server/boot-file; runs in this process (port 67)
