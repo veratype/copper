@@ -1,5 +1,5 @@
 {{define "content"}}
-<section>
+<section id="servers-page">
   <div class="row">
     <div>
       <h1>Bare-metal servers</h1>
@@ -17,9 +17,29 @@
   {{if not .Servers}}
   <p class="empty">No servers yet. Add BMC endpoints manually or <a href="/servers/import">import a CSV</a>. Imported rows stay <em>declared</em> until you Probe with credentials or OOB DHCP matches MAC/IP.</p>
   {{else}}
-  <table>
+  <div class="batch-bar" id="batch-bar">
+    <div class="batch-select">
+      <label class="check">
+        <input type="checkbox" id="batch-select-all" title="Select all bound servers">
+        Select
+      </label>
+      <button type="button" class="btn ghost" id="batch-select-none">None</button>
+      <button type="button" class="btn ghost" id="batch-select-bound">Bound only</button>
+      <span class="muted" id="batch-count">0 selected</span>
+      <span class="muted" id="batch-runtime-hint"><a href="/settings">Settings</a></span>
+    </div>
+    <div class="batch-actions">
+      <button type="button" class="btn" id="batch-inventory" disabled>Inventory</button>
+      <button type="button" class="btn" id="batch-reboot" disabled>Reboot</button>
+      <button type="button" class="btn" id="batch-mount" disabled>Mount &amp; boot</button>
+      <a class="btn ghost" id="batch-zip" hidden href="#">Download inventories ZIP</a>
+    </div>
+  </div>
+
+  <table id="servers-table">
     <thead>
       <tr>
+        <th class="col-check"></th>
         <th>Name</th>
         <th>Status</th>
         <th>Chassis</th>
@@ -31,8 +51,28 @@
     </thead>
     <tbody>
       {{range .Servers}}
-      <tr>
-        <td><a href="/servers/{{.ID}}">{{.Name}}</a></td>
+      <tr data-server-id="{{.ID}}"
+          data-server-name="{{.Name}}"
+          data-status="{{.Status}}"
+          data-endpoint="{{.Endpoint}}">
+        <td class="col-check">
+          <input type="checkbox" class="batch-check"
+                 value="{{.ID}}"
+                 data-name="{{.Name}}"
+                 data-status="{{.Status}}"
+                 {{if or (ne .Status "bound") (eq .Endpoint "")}}disabled title="Bound + endpoint required"{{end}}>
+        </td>
+        <td>
+          <span class="row-status" hidden aria-hidden="true">
+            <svg class="row-spinner" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <circle class="busy-track" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"/>
+              <circle class="busy-arc row-arc" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"
+                      stroke-linecap="round" stroke-dasharray="40 56"/>
+            </svg>
+          </span>
+          <a href="/servers/{{.ID}}">{{.Name}}</a>
+          <span class="row-msg muted" hidden></span>
+        </td>
         <td>
           {{if eq .Status "declared"}}
           <span class="badge badge-declared">declared</span>
@@ -55,6 +95,56 @@
       {{end}}
     </tbody>
   </table>
+
+  <div id="batch-mount-panel" class="panel stack batch-mount-panel" hidden>
+    <div class="row">
+      <h2>Batch Mount &amp; boot</h2>
+      <button type="button" class="btn ghost" id="batch-mount-cancel">Cancel</button>
+    </div>
+    <p class="muted">Same image URL is sent to every selected server. BMC must reach the OOB media plane.</p>
+    <fieldset class="mount-source">
+      <legend class="sr-only">Image source</legend>
+      <label class="check">
+        <input type="radio" name="batch_url_source" value="library" checked>
+        Pick from copper_bmc media folder
+      </label>
+      <label class="check">
+        <input type="radio" name="batch_url_source" value="manual">
+        Enter URL manually
+      </label>
+    </fieldset>
+    <div id="batch-mount-library" class="stack">
+      <p class="muted" id="batch-media-meta"></p>
+      <label>File
+        <select id="batch-media-select">
+          <option value="">— loading —</option>
+        </select>
+      </label>
+      <label id="batch-media-base-wrap" hidden>OOB media base URL (BMC-reachable)
+        <input id="batch-media-base" type="url" placeholder="http://192.168.10.20:8080" autocomplete="off">
+      </label>
+    </div>
+    <div id="batch-mount-manual" class="stack" hidden>
+      <label>Image URL
+        <input id="batch-image-url-manual" type="url" placeholder="http://&lt;oob-ip&gt;:8080/os.iso" autocomplete="off">
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" id="batch-mount-boot-once" value="1" checked> Boot once to media</label>
+    <label class="check"><input type="checkbox" id="batch-mount-reboot" value="1" checked> Reboot after mount</label>
+    <button type="button" class="btn" id="batch-mount-run">Mount &amp; boot selected</button>
+  </div>
   {{end}}
 </section>
+
+<aside id="float-log" class="float-log" hidden>
+  <div class="float-log-head" id="float-log-drag" title="Drag to move">
+    <strong>Batch / activity</strong>
+    <div class="float-log-actions">
+      <button type="button" class="btn ghost" id="float-log-clear">Clear</button>
+      <button type="button" class="btn ghost" id="float-log-toggle">Minimize</button>
+    </div>
+  </div>
+  <p class="muted float-log-status" id="float-log-status">idle</p>
+  <div id="float-log-body" class="float-log-body" aria-live="polite"></div>
+</aside>
 {{end}}

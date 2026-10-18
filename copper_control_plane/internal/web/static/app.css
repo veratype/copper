@@ -341,3 +341,128 @@ body.is-busy button, body.is-busy .btn { pointer-events: none; opacity: 0.7; }
 .activity-console .level-warn { color: #ffb088; }
 .activity-console .level-error { color: #ff8a65; }
 .activity-panel { margin-top: 1.5rem; }
+
+.batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.batch-select, .batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--blue);
+  border-color: var(--line-strong);
+  font-weight: 500;
+}
+.btn.ghost:hover {
+  background: var(--blue-soft);
+  border-color: var(--blue-mid);
+  color: var(--blue);
+}
+.btn:disabled, button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.col-check { width: 2.2rem; text-align: center; }
+.row-status {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 0.35rem;
+}
+.row-status[hidden] { display: none !important; }
+.row-spinner { display: block; }
+.row-arc {
+  stroke: var(--orange);
+  transform-origin: 12px 12px;
+  animation: busy-spin 0.85s linear infinite;
+}
+.row-msg {
+  display: inline;
+  margin-left: 0.4rem;
+  font-size: 0.85rem;
+}
+.row-msg.is-error { color: var(--danger); }
+.row-msg.is-ok { color: #1b7a4e; }
+.batch-mount-panel { margin-top: 1rem; }
+
+.float-log {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 900;
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: min(40vh, 22rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 36px rgba(15, 27, 45, 0.18);
+  overflow: hidden;
+}
+.float-log[hidden] { display: none !important; }
+.float-log.is-minimized {
+  max-height: none;
+}
+.float-log.is-minimized .float-log-body,
+.float-log.is-minimized .float-log-status {
+  display: none;
+}
+.float-log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--blue-soft);
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.float-log.is-dragging .float-log-head { cursor: grabbing; }
+.float-log-head strong { font-size: 0.9rem; color: var(--blue); }
+.float-log-actions { display: flex; gap: 0.35rem; }
+.float-log-actions .btn { cursor: pointer; }
+.float-log-actions .btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.8rem;
+}
+.float-log-status {
+  margin: 0;
+  padding: 0.35rem 0.75rem 0;
+  font-size: 0.8rem;
+}
+.float-log-body {
+  flex: 1;
+  overflow: auto;
+  margin: 0.4rem 0.5rem 0.6rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--console);
+  color: var(--console-fg);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  min-height: 6rem;
+  max-height: 14rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.float-log-body .log-line { margin: 0; }
+.float-log-body .level-warn { color: #ffb088; }
+.float-log-body .level-error { color: #ff8a65; }
+.float-log-body .level-local { color: #9ecbff; }

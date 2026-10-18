@@ -67,6 +67,8 @@ type pageData struct {
 	MediaFolder  string
 	MediaNote    string
 	MediaError   string
+
+	BatchRuntime store.BatchRuntime
 }
 
 // mediaFileRow is one agent media-folder entry for the mount UI.
@@ -93,7 +95,7 @@ type leaseRow struct {
 
 func New(cfg *config.Config, st *store.Store, ag *agent.Client, localDHCP *copper_dhcp.Manager, templatesFS, staticFS fs.FS) (*Server, error) {
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login.html", "servers.html", "server_form.html", "server_detail.html", "server_import.html", "dhcp.html", "dhcp_data.html", "activity.html"} {
+	for _, name := range []string{"login.html", "servers.html", "server_form.html", "server_detail.html", "server_import.html", "dhcp.html", "dhcp_data.html", "activity.html", "settings.html"} {
 		t, err := template.ParseFS(templatesFS, "templates/layout.html", "templates/"+name)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
@@ -155,6 +157,16 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /activity", s.auth(s.handleActivityPage))
 	mux.Handle("GET /api/agent/activity", s.auth(s.handleActivityAPI))
+
+	mux.Handle("GET /api/media/files", s.auth(s.handleAPIMediaFiles))
+	mux.Handle("POST /api/servers/{id}/actions/inventory", s.auth(s.handleAPIInventory))
+	mux.Handle("POST /api/servers/{id}/actions/reset", s.auth(s.handleAPIReset))
+	mux.Handle("POST /api/servers/{id}/actions/mount", s.auth(s.handleAPIMount))
+	mux.Handle("GET /api/servers/inventory.zip", s.auth(s.handleAPIInventoryZIP))
+
+	mux.Handle("GET /settings", s.auth(s.handleSettingsGet))
+	mux.Handle("POST /settings", s.auth(s.handleSettingsPost))
+	mux.Handle("GET /api/settings/batch", s.auth(s.handleAPIBatchSettings))
 
 	return mux
 }

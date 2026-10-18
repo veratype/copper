@@ -16,8 +16,15 @@ import (
 )
 
 const (
-	settingAgentDHCP = "agent_dhcp_config" // OOB/BMC plane (pushed to copper_bmc)
-	settingLocalDHCP = "local_dhcp_config" // data plane (runs in this process)
+	settingAgentDHCP    = "agent_dhcp_config" // OOB/BMC plane (pushed to copper_bmc)
+	settingLocalDHCP    = "local_dhcp_config" // data plane (runs in this process)
+	settingBatchRuntime = "batch_runtime"     // executors + per-action timeouts
+
+	DefaultBatchExecutors          = 3
+	MaxBatchExecutors              = 16
+	DefaultTimeoutInventorySeconds = 180
+	DefaultTimeoutRebootSeconds    = 60
+	DefaultTimeoutMountSeconds     = 180
 
 	// StatusDeclared = imported / known credentials, not yet matched to live OOB discovery.
 	StatusDeclared = "declared"
@@ -156,6 +163,79 @@ func (s *Store) GetSetting(key string) (string, error) {
 		return "", nil
 	}
 	return v, err
+}
+
+// BatchRuntime is admin-tunable batch concurrency and per-action timeouts.
+type BatchRuntime struct {
+	Executors int `json:"executors"`
+	Timeouts  struct {
+		Inventory int `json:"inventory"` // seconds
+		Reboot    int `json:"reboot"`
+		Mount     int `json:"mount"`
+	} `json:"timeouts"`
+}
+
+func DefaultBatchRuntime() BatchRuntime {
+	var b BatchRuntime
+	b.Executors = DefaultBatchExecutors
+	b.Timeouts.Inventory = DefaultTimeoutInventorySeconds
+	b.Timeouts.Reboot = DefaultTimeoutRebootSeconds
+	b.Timeouts.Mount = DefaultTimeoutMountSeconds
+	return b
+}
+
+func (b BatchRuntime) Normalize() BatchRuntime {
+	out := b
+	if out.Executors < 1 {
+		out.Executors = DefaultBatchExecutors
+	}
+	if out.Executors > MaxBatchExecutors {
+		out.Executors = MaxBatchExecutors
+	}
+	if out.Timeouts.Inventory < 10 {
+		out.Timeouts.Inventory = DefaultTimeoutInventorySeconds
+	}
+	if out.Timeouts.Reboot < 5 {
+		out.Timeouts.Reboot = DefaultTimeoutRebootSeconds
+	}
+	if out.Timeouts.Mount < 10 {
+		out.Timeouts.Mount = DefaultTimeoutMountSeconds
+	}
+	// Soft ceilings so a typo does not hang the UI for hours.
+	if out.Timeouts.Inventory > 900 {
+		out.Timeouts.Inventory = 900
+	}
+	if out.Timeouts.Reboot > 300 {
+		out.Timeouts.Reboot = 300
+	}
+	if out.Timeouts.Mount > 900 {
+		out.Timeouts.Mount = 900
+	}
+	return out
+}
+
+func (s *Store) GetBatchRuntime() (BatchRuntime, error) {
+	raw, err := s.GetSetting(settingBatchRuntime)
+	if err != nil {
+		return DefaultBatchRuntime(), err
+	}
+	if raw == "" {
+		return DefaultBatchRuntime(), nil
+	}
+	var b BatchRuntime
+	if err := json.Unmarshal([]byte(raw), &b); err != nil {
+		return DefaultBatchRuntime(), fmt.Errorf("parse batch runtime: %w", err)
+	}
+	return b.Normalize(), nil
+}
+
+func (s *Store) SaveBatchRuntime(b BatchRuntime) error {
+	b = b.Normalize()
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(settingBatchRuntime, string(raw))
 }
 
 // GetAgentDHCPConfig loads the last saved agent DHCP policy (may be zero value).

@@ -1,0 +1,38 @@
+{{define "content"}}
+<section class="narrow">
+  <div class="row">
+    <div>
+      <h1>Settings</h1>
+      <p class="muted">Batch runtime for the Servers page. Stored in the control-plane database (admin session required).</p>
+    </div>
+    <div class="actions">
+      <a href="/">Back to servers</a>
+    </div>
+  </div>
+
+  <form method="post" action="/settings" class="stack panel">
+    <h2>Batch executors</h2>
+    <p class="muted">How many servers to process at once. Default 3; hard max 16. Mount can still saturate the OOB media NIC — raise carefully.</p>
+    <label>Parallel executors
+      <input name="executors" type="number" min="1" max="16" required value="{{.BatchRuntime.Executors}}">
+    </label>
+
+    <h2>Per-action timeouts</h2>
+    <p class="muted">Seconds for each server call in a batch. Inventory and Mount are long Redfish / media ops; Reboot is usually quick.</p>
+    <label>Inventory timeout (seconds)
+      <input name="timeout_inventory" type="number" min="10" max="900" required value="{{.BatchRuntime.Timeouts.Inventory}}">
+    </label>
+    <label>Reboot timeout (seconds)
+      <input name="timeout_reboot" type="number" min="5" max="300" required value="{{.BatchRuntime.Timeouts.Reboot}}">
+    </label>
+    <label>Mount &amp; boot timeout (seconds)
+      <input name="timeout_mount" type="number" min="10" max="900" required value="{{.BatchRuntime.Timeouts.Mount}}">
+    </label>
+
+    <div class="actions">
+      <button type="submit">Save settings</button>
+      <a class="btn ghost" href="/settings">Reset form</a>
+    </div>
+  </form>
+</section>
+{{end}}
