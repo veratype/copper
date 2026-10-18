@@ -26,7 +26,8 @@ type BindResult struct {
 	Unmatched    int
 	LLDPSeen     int
 	LLDPEnriched int
-	Error        string
+	Error        string // hard failure (agent / DHCP); blocks success flash
+	LLDPWarning  string // soft: LLDP unavailable or enrich issue; sync still OK
 }
 
 // reconcileOOBDHCP pulls agent DHCP leases and binds matching declared/imported servers.
@@ -85,10 +86,10 @@ func (s *Server) reconcileOOBDHCP() BindResult {
 	out.LLDPSeen = lldp.LLDPSeen
 	out.LLDPEnriched = lldp.LLDPEnriched
 	if lldp.Error != "" {
+		// LLDP is optional enrichment (needs a concrete OOB NIC + CAP_NET_RAW).
+		// Never fail the whole sync when leases already succeeded.
 		log.Printf("lldp enrich: %s", lldp.Error)
-		if out.Error == "" {
-			out.Error = "lldp: " + lldp.Error
-		}
+		out.LLDPWarning = lldp.Error
 	}
 	return out
 }

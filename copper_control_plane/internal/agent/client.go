@@ -224,6 +224,35 @@ func (c *Client) VirtualMedia(srv *store.Server) (json.RawMessage, error) {
 	return out, err
 }
 
+// MediaFile is one path under copper_bmc's OOB media folder.
+type MediaFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+// MediaCatalog is GET /v1/media/files from copper_bmc.
+type MediaCatalog struct {
+	Folder  string      `json:"folder"`
+	BaseURL string      `json:"base_url"`
+	Bind    string      `json:"bind"`
+	Iface   string      `json:"interface"`
+	Files   []MediaFile `json:"files"`
+	Note    string      `json:"note,omitempty"`
+}
+
+// MediaFiles lists ISOs/images served on the agent's OOB media plane.
+func (c *Client) MediaFiles() (*MediaCatalog, error) {
+	var out MediaCatalog
+	err := c.do(http.MethodGet, "/v1/media/files", nil, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if out.Files == nil {
+		out.Files = []MediaFile{}
+	}
+	return &out, nil
+}
+
 func (c *Client) MountMedia(srv *store.Server, body any) (json.RawMessage, error) {
 	var out json.RawMessage
 	err := c.do(http.MethodPost, "/v1/system/virtual-media/mount", srv, body, &out)

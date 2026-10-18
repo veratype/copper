@@ -15,6 +15,88 @@
     document.body.classList.remove("is-busy");
   }
 
+  // Mount ISO: pick agent media file or type a URL manually.
+  // Runs in capture before the busy overlay so image_url is filled first.
+  (function initMountForm() {
+    var form = document.getElementById("mount-form");
+    if (!form) return;
+
+    var libraryPanel = document.getElementById("mount-library");
+    var manualPanel = document.getElementById("mount-manual");
+    var fileSelect = document.getElementById("media-file-select");
+    var baseInput = document.getElementById("media-base-url");
+    var manualInput = document.getElementById("image-url-manual");
+    var hiddenURL = document.getElementById("image-url");
+    var radios = form.querySelectorAll('input[name="url_source"]');
+
+    function source() {
+      var checked = form.querySelector('input[name="url_source"]:checked');
+      return checked ? checked.value : "manual";
+    }
+
+    function joinURL(base, path) {
+      base = (base || "").replace(/\/+$/, "");
+      path = (path || "").replace(/^\/+/, "");
+      if (!base || !path) return "";
+      return base + "/" + path;
+    }
+
+    function syncHidden() {
+      if (source() === "library") {
+        var opt = fileSelect && fileSelect.options[fileSelect.selectedIndex];
+        var url = "";
+        if (opt && opt.value) {
+          url = opt.getAttribute("data-url") || "";
+          if (!url) {
+            url = joinURL(baseInput && baseInput.value, opt.getAttribute("data-path") || opt.value);
+          }
+        }
+        if (hiddenURL) hiddenURL.value = url;
+      } else if (hiddenURL && manualInput) {
+        hiddenURL.value = (manualInput.value || "").trim();
+      }
+    }
+
+    function toggle() {
+      var lib = source() === "library";
+      if (libraryPanel) {
+        libraryPanel.hidden = !lib;
+        libraryPanel.setAttribute("aria-hidden", lib ? "false" : "true");
+      }
+      if (manualPanel) {
+        manualPanel.hidden = lib;
+        manualPanel.setAttribute("aria-hidden", lib ? "true" : "false");
+      }
+      syncHidden();
+    }
+
+    radios.forEach(function (r) {
+      r.addEventListener("change", toggle);
+    });
+    if (fileSelect) fileSelect.addEventListener("change", syncHidden);
+    if (baseInput) baseInput.addEventListener("input", syncHidden);
+    if (manualInput) manualInput.addEventListener("input", syncHidden);
+
+    document.addEventListener(
+      "submit",
+      function (e) {
+        if (e.target !== form) return;
+        syncHidden();
+        if (!hiddenURL || !(hiddenURL.value || "").trim()) {
+          e.preventDefault();
+          window.alert(
+            source() === "library"
+              ? "Select a media file (and OOB base URL if prompted)."
+              : "Enter an image URL."
+          );
+        }
+      },
+      true
+    );
+
+    toggle();
+  })();
+
   document.addEventListener(
     "submit",
     function (e) {
@@ -22,6 +104,7 @@
       if (!(form instanceof HTMLFormElement) || !form.classList.contains("busy")) {
         return;
       }
+      if (e.defaultPrevented) return;
 
       var confirmMsg = form.getAttribute("data-confirm");
       if (confirmMsg && !window.confirm(confirmMsg)) {

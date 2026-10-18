@@ -45,12 +45,64 @@
     </form>
   </div>
 
-  <form method="post" action="/servers/{{.Server.ID}}/actions/mount" class="stack panel busy" data-busy="Mounting media…">
+  <form id="mount-form" method="post" action="/servers/{{.Server.ID}}/actions/mount" class="stack panel busy" data-busy="Mounting media…">
     <h2>Mount ISO + one-time boot</h2>
     <p class="muted">image_url must be reachable by the BMC on the OOB/media plane (copper_bmc media port).</p>
-    <label>Image URL
-      <input name="image_url" required placeholder="http://&lt;oob-ip&gt;:8080/os.iso">
-    </label>
+
+    <fieldset class="mount-source">
+      <legend class="sr-only">Image source</legend>
+      <label class="check">
+        <input type="radio" name="url_source" value="library" checked>
+        Pick from copper_bmc media folder
+      </label>
+      <label class="check">
+        <input type="radio" name="url_source" value="manual">
+        Enter URL manually
+      </label>
+    </fieldset>
+
+    <div id="mount-library" class="stack">
+      {{if .MediaError}}
+      <p class="error">Could not list agent media files: {{.MediaError}}</p>
+      <p class="muted">Switch to “Enter URL manually”, or check that copper_bmc is up.</p>
+      {{else if .MediaFiles}}
+      <p class="muted cache-meta">
+        Folder <code>{{.MediaFolder}}</code>
+        {{if .MediaBaseURL}} · base <code>{{.MediaBaseURL}}</code>{{end}}
+      </p>
+      {{if .MediaNote}}<p class="muted">{{.MediaNote}}</p>{{end}}
+      <label>File
+        <select id="media-file-select">
+          <option value="">— select a file —</option>
+          {{range .MediaFiles}}
+          <option value="{{.Path}}" data-url="{{.URL}}" data-path="{{.Path}}">{{.Path}} ({{.SizeHuman}})</option>
+          {{end}}
+        </select>
+      </label>
+      {{if not .MediaBaseURL}}
+      <label>OOB media base URL (BMC-reachable)
+        <input id="media-base-url" type="url" placeholder="http://192.168.10.20:8080" autocomplete="off">
+      </label>
+      {{else}}
+      <input type="hidden" id="media-base-url" value="{{.MediaBaseURL}}">
+      {{end}}
+      {{else}}
+      <p class="muted">
+        No files in agent media folder{{if .MediaFolder}} (<code>{{.MediaFolder}}</code>){{end}}.
+        Add ISOs there, or enter a URL manually.
+      </p>
+      {{if .MediaNote}}<p class="muted">{{.MediaNote}}</p>{{end}}
+      {{end}}
+    </div>
+
+    <div id="mount-manual" class="stack" hidden>
+      <label>Image URL
+        <input id="image-url-manual" type="url" placeholder="http://&lt;oob-ip&gt;:8080/os.iso" autocomplete="off">
+      </label>
+    </div>
+
+    <input type="hidden" name="image_url" id="image-url" value="">
+
     <label class="check"><input type="checkbox" name="boot_once" value="1" checked> Boot once to media</label>
     <label class="check"><input type="checkbox" name="reboot" value="1" checked> Reboot after mount</label>
     <button type="submit">Mount &amp; boot</button>

@@ -44,6 +44,7 @@ It asks you a few questions as it starts.
 | Command API listen port | `9090` | Port the control plane uses to send commands |
 | Command bind NIC | `0.0.0.0` | Network card or IP address facing the control-plane network |
 | Enable DHCP server role? | `N` | If you say yes, the agent will run DHCP, but only with settings sent by the control plane |
+| Enable LLDP capture? | `N` | If you say yes, the agent listens for LLDP on the OOB media NIC (needs root or `CAP_NET_RAW`). Saying no skips LLDP; media, command API, and DHCP still run |
 
 The agent never stores Redfish usernames or passwords. Every time the control plane sends a request, it includes the BMC's address and login details along with it.
 
@@ -54,7 +55,7 @@ Once the agent is running, you should see both networks listed, something like t
 
 Everything the agent does is printed in its console. That includes DHCP offers and acknowledgements, LLDP neighbors it spots, image downloads, and Redfish operations. The same log also appears on the control plane's **Activity** page, and DHCP events on their own stream live on the **OOB DHCP** page. When the DHCP role is on, the agent keeps `data/oob_dhcp_config.json` and `data/oob_dhcp_leases.json` so a BMC restart restores the last policy and leases by itself. Separately, the control plane watches agent health and auto-repushes the saved OOB DHCP policy if the agent comes back with DHCP not running — no manual push required.
 
-**Finding out where servers are plugged in (LLDP).** Network switches regularly announce themselves using a protocol called LLDP. copper_bmc quietly listens for these announcements on the OOB media network card and makes them available at `GET /v1/net/lldp`. Listening this way requires the `CAP_NET_RAW` permission. In the control plane, the **Sync OOB DHCP + LLDP** button and the per-server **Lookup chassis (LLDP)** button use this data to fill in each server's `chassis_id` and any missing MAC addresses. They match a server to an announcement by its source MAC, chassis ID, or management IP.
+**Finding out where servers are plugged in (LLDP).** At startup you can opt into LLDP capture. If you say yes, copper_bmc listens for switch/BMC LLDP announcements on the OOB media NIC (`GET /v1/net/lldp`). That needs root or `CAP_NET_RAW`, and a concrete media NIC (not `0.0.0.0`). If you say no, LLDP is skipped and the rest of the agent runs normally. In the control plane, **Sync from agent** / **Sync OOB DHCP + LLDP** and per-server **Lookup chassis (LLDP)** use this data when available; missing LLDP does not fail lease sync.
 
 ### Step 2. Start copper_control_plane
 

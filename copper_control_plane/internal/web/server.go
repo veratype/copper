@@ -60,6 +60,20 @@ type pageData struct {
 	// CSV import
 	ImportResult *csvImportResult
 	CSVSample    string
+
+	// Mount ISO: agent OOB media library
+	MediaFiles   []mediaFileRow
+	MediaBaseURL string
+	MediaFolder  string
+	MediaNote    string
+	MediaError   string
+}
+
+// mediaFileRow is one agent media-folder entry for the mount UI.
+type mediaFileRow struct {
+	Path      string
+	SizeHuman string
+	URL       string // full BMC-reachable URL when MediaBaseURL is known
 }
 
 // knownMAC is an inventory server MAC offered on the DHCP allow list.
@@ -215,8 +229,7 @@ func (s *Server) handleServersSyncDHCP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?error="+urlQuery(res.Error), http.StatusSeeOther)
 		return
 	}
-	msg := fmt.Sprintf("OOB DHCP sync: %d lease(s), %d matched, %d updated, %d unmatched; LLDP: %d neighbor(s), %d enriched",
-		res.LeasesSeen, res.Bound, res.Updated, res.Unmatched, res.LLDPSeen, res.LLDPEnriched)
+	msg := formatSyncFlash(res)
 	http.Redirect(w, r, "/?flash="+urlQuery(msg), http.StatusSeeOther)
 }
 
@@ -339,7 +352,7 @@ func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
 		data.ResultKind = "inventory"
 		data.ResultFetchedAt = snap.FetchedAt.Local().Format("2006-01-02 15:04:05 MST")
 	}
-	s.render(w, "server_detail.html", data)
+	s.render(w, "server_detail.html", s.withMediaCatalog(data))
 }
 
 func (s *Server) handleSaveMAC(w http.ResponseWriter, r *http.Request) {
@@ -560,11 +573,11 @@ func (s *Server) handleActionProbe(w http.ResponseWriter, r *http.Request) {
 			formatted = string(pretty)
 		}
 	}
-	s.render(w, "server_detail.html", pageData{
+	s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 		Title: srv.Name, Authed: true, Server: srv,
 		Flash: "Probe OK — credentials work; server is now bound.",
 		Result: formatted, ResultKind: "probe",
-	})
+	}))
 }
 
 func (s *Server) handleActionInventory(w http.ResponseWriter, r *http.Request) {
@@ -587,8 +600,21 @@ func (s *Server) handleActionReset(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleActionMount(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	imageURL := strings.TrimSpace(r.FormValue("image_url"))
+	if imageURL == "" {
+		srv, err := s.serverFromPath(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
+			Title: srv.Name, Authed: true, Server: srv,
+			Error: "image_url is required — pick a media file or enter a URL",
+		}))
+		return
+	}
 	body := map[string]any{
-		"image_url": strings.TrimSpace(r.FormValue("image_url")),
+		"image_url": imageURL,
 		"boot_once": r.FormValue("boot_once") == "1",
 		"reboot":    r.FormValue("reboot") == "1",
 	}
@@ -636,22 +662,24 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request, kind string, 
 		return
 	}
 	if srv.Status == store.StatusDeclared {
-		s.render(w, "server_detail.html", pageData{
+		s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 			Title: srv.Name, Authed: true, Server: srv,
 			Error: "server is still declared — Probe with credentials (or wait for OOB DHCP bind) before Redfish actions",
-		})
+		}))
 		return
 	}
 	if strings.TrimSpace(srv.Endpoint) == "" {
-		s.render(w, "server_detail.html", pageData{
+		s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 			Title: srv.Name, Authed: true, Server: srv,
 			Error: "no BMC endpoint yet — set an IP and Probe, or wait for OOB DHCP bind",
-		})
+		}))
 		return
 	}
 	raw, err := fn(srv)
 	if err != nil {
-		s.render(w, "server_detail.html", pageData{Title: srv.Name, Authed: true, Server: srv, Error: err.Error()})
+		s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
+			Title: srv.Name, Authed: true, Server: srv, Error: err.Error(),
+		}))
 		return
 	}
 
@@ -666,20 +694,59 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request, kind string, 
 	fetchedAt := ""
 	if persist {
 		if err := s.store.SaveSnapshot(srv.ID, kind, formatted); err != nil {
-			s.render(w, "server_detail.html", pageData{
+			s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 				Title: srv.Name, Authed: true, Server: srv,
 				Error: "inventory ok but failed to cache: " + err.Error(),
 				Result: formatted, ResultKind: kind,
-			})
+			}))
 			return
 		}
 		fetchedAt = time.Now().Local().Format("2006-01-02 15:04:05 MST")
 	}
 
-	s.render(w, "server_detail.html", pageData{
+	s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 		Title: srv.Name, Authed: true, Server: srv,
 		Result: formatted, ResultKind: kind, ResultFetchedAt: fetchedAt,
-	})
+	}))
+}
+
+// withMediaCatalog loads copper_bmc's OOB media folder listing for the mount UI.
+func (s *Server) withMediaCatalog(data pageData) pageData {
+	cat, err := s.agent.MediaFiles()
+	if err != nil {
+		data.MediaError = err.Error()
+		return data
+	}
+	data.MediaBaseURL = strings.TrimRight(cat.BaseURL, "/")
+	data.MediaFolder = cat.Folder
+	data.MediaNote = cat.Note
+	data.MediaFiles = make([]mediaFileRow, 0, len(cat.Files))
+	for _, f := range cat.Files {
+		row := mediaFileRow{
+			Path:      f.Path,
+			SizeHuman: formatByteSize(f.Size),
+		}
+		if data.MediaBaseURL != "" {
+			row.URL = data.MediaBaseURL + "/" + strings.TrimLeft(f.Path, "/")
+		}
+		data.MediaFiles = append(data.MediaFiles, row)
+	}
+	return data
+}
+
+func formatByteSize(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	v := float64(n)
+	for _, u := range units {
+		v /= 1024
+		if v < 1024 {
+			return fmt.Sprintf("%.1f %s", v, u)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", v/1024)
 }
 
 func sanitizeFilename(s string) string {
@@ -790,9 +857,16 @@ func (s *Server) handleDHCPSync(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dhcp/oob?error="+urlQuery(res.Error), http.StatusSeeOther)
 		return
 	}
+	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery(formatSyncFlash(res)), http.StatusSeeOther)
+}
+
+func formatSyncFlash(res BindResult) string {
 	msg := fmt.Sprintf("Synced from agent: %d lease(s), %d matched, %d updated, %d unmatched; LLDP: %d neighbor(s), %d enriched",
 		res.LeasesSeen, res.Bound, res.Updated, res.Unmatched, res.LLDPSeen, res.LLDPEnriched)
-	http.Redirect(w, r, "/dhcp/oob?flash="+urlQuery(msg), http.StatusSeeOther)
+	if res.LLDPWarning != "" {
+		msg += " — LLDP skipped: " + res.LLDPWarning
+	}
+	return msg
 }
 
 func (s *Server) handleDataDHCPGet(w http.ResponseWriter, r *http.Request) {
