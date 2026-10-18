@@ -1,113 +1,123 @@
 # Copper
 
-A lightweight bare-metal control stack: keep a server inventory and drive BMCs over Redfish without leaning on Ironic.
+Copper is a small toolkit for managing physical (bare-metal) servers. It keeps track of which servers you have and lets you control them remotely through their BMC, the little management computer built into most servers. It talks to BMCs using Redfish, the standard API they speak, and it does all of this without needing OpenStack Ironic.
 
-## Why this exists
+## Why we built it
 
-While installing OSes on bare metal, we repeatedly hit bad network configs (for example PortFast left on) and needed a clear, trustworthy picture of our server inventory. We looked at how Ironic approaches this and did not like that model for our setup, so we built our own solution:
+Installing operating systems on physical servers kept going wrong because of network misconfiguration. A common culprit was PortFast being left switched off at the switch. On top of that, we never had a clear, reliable view of which servers we actually had. We looked at Ironic, the usual tool for this job, but its way of doing things didn't suit our setup. So we wrote our own.
 
-- **`copper_bmc`** — agent that sits near the hardware: serves install media on the OOB/BMC network and exposes a command API on the control-plane network; optional DHCPv4 role for BMC IPs
-- **`copper_control_plane`** — web UI + SQLite inventory of servers and BMC credentials; talks to `copper_bmc` to inspect systems, mount virtual media, set boot order, reset hosts; owns OOB DHCP policy for the agent and runs data-NIC DHCP (with PXE next-server / boot-file) locally
+Copper has two parts.
 
-## Requirements
+**copper_bmc** is an agent you run close to the hardware. It works on two networks at once. On the out-of-band (OOB) network, where the BMCs live, it hosts the install images (ISOs) that servers boot from. On the control-plane network, it offers an API that accepts commands. If you switch the option on, it can also hand out IP addresses to BMCs over DHCP.
 
-- Go 1.26+
-- Network reachability:
-  - BMCs → `copper_bmc` media listener (ISO / image download)
-  - Control plane → `copper_bmc` command API
-  - Your browser → `copper_control_plane` web UI
-  - Hosts on the data NIC → control plane DHCP (port 67) when Data DHCP is enabled
+**copper_control_plane** is the part you actually interact with. It's a web interface backed by a small SQLite database that stores your server list and BMC login details. When you want to do something to a server, such as look up its details, attach an install image as a virtual CD, change the boot order, or restart it, the control plane asks copper_bmc to do it. The control plane also decides how DHCP should behave on the OOB network and sends those settings to the agent. Separately, it runs its own DHCP server for the servers' regular data network cards, including the settings servers need to boot over the network (PXE).
 
-## How to run
+## What you need
 
-Run **`copper_bmc` first**, then the control plane so it can point at the agent.
+You need Go 1.26 or newer.
 
-### 1. copper_bmc
+The machines also need to be able to reach each other.
+
+- BMCs need to reach copper_bmc's media server so they can download ISOs and images.
+- The control plane needs to reach copper_bmc's command API.
+- Your browser needs to reach the control plane's web interface.
+- If you turn on Data DHCP, the servers' data network cards need to reach the control plane's DHCP server on port 67.
+
+## Getting it running
+
+Start copper_bmc first. The control plane needs to know where the agent is, so the agent should already be up when the control plane starts.
+
+### Step 1. Start copper_bmc
 
 ```bash
 cd copper_bmc
 go run ./cmd/copper_bmc
 ```
 
-Startup is interactive. You will be asked for:
+It asks you a few questions as it starts.
 
-| Prompt | Default | Purpose |
-|--------|---------|---------|
-| Media listen port | `8080` | HTTP file server for ISOs (OOB / BMC plane) |
-| Folder to serve | _(required)_ | Directory of images BMCs can pull |
-| Media bind NIC | `0.0.0.0` | NIC/IP facing the BMC network |
-| Command API listen port | `9090` | API for the control plane |
-| Command bind NIC | `0.0.0.0` | NIC/IP facing the control-plane network |
-| Enable DHCP server role? | `N` | If yes, agent accepts DHCP config from the control plane only |
+| Question | Default | What it's for |
+|----------|---------|---------------|
+| Media listen port | `8080` | Port for the file server that hands ISOs to BMCs on the OOB network |
+| Folder to serve | None, you have to provide one | Folder containing the images BMCs can download |
+| Media bind NIC | `0.0.0.0` | Network card or IP address facing the BMC network |
+| Command API listen port | `9090` | Port the control plane uses to send commands |
+| Command bind NIC | `0.0.0.0` | Network card or IP address facing the control-plane network |
+| Enable DHCP server role? | `N` | If you say yes, the agent will run DHCP, but only with settings sent by the control plane |
 
-Redfish credentials are **not** stored on the agent — the control plane sends a BMC target with each request.
+The agent never stores Redfish usernames or passwords. Every time the control plane sends a request, it includes the BMC's address and login details along with it.
 
-When it is up you should see both planes, for example:
+Once the agent is running, you should see both networks listed, something like this.
 
-- Media: `http://<oob-ip>:8080/`
-- Command API: `http://<cp-ip>:9090/` (`GET /v1/health`, `GET /v1/activity`, system/boot/virtual-media/reset routes; DHCP routes if role enabled)
+- Media server at `http://<oob-ip>:8080/`
+- Command API at `http://<cp-ip>:9090/`, which offers `GET /v1/health`, `GET /v1/activity`, and routes for system info, boot settings, virtual media and resets. If you enabled the DHCP role, DHCP routes are there too.
 
-Agent activity (DHCP offers/ACKs, LLDP neighbors, media hits, Redfish ops) is printed on the `copper_bmc` console and mirrored to the control plane **Activity** page (and a DHCP-only live console on **OOB DHCP**).
+Everything the agent does is printed in its console. That includes DHCP offers and acknowledgements, LLDP neighbors it spots, image downloads, and Redfish operations. The same log also appears on the control plane's **Activity** page, and DHCP events on their own stream live on the **OOB DHCP** page.
 
-**LLDP:** `copper_bmc` passively captures LLDP on the OOB media NIC (`GET /v1/net/lldp`, needs `CAP_NET_RAW`). Control plane **Sync OOB DHCP + LLDP** and per-server **Lookup chassis (LLDP)** fill `chassis_id` (and MAC gaps) by matching neighbor src MAC / chassis id / mgmt IP.
+**Finding out where servers are plugged in (LLDP).** Network switches regularly announce themselves using a protocol called LLDP. copper_bmc quietly listens for these announcements on the OOB media network card and makes them available at `GET /v1/net/lldp`. Listening this way requires the `CAP_NET_RAW` permission. In the control plane, the **Sync OOB DHCP + LLDP** button and the per-server **Lookup chassis (LLDP)** button use this data to fill in each server's `chassis_id` and any missing MAC addresses. They match a server to an announcement by its source MAC, chassis ID, or management IP.
 
-### 2. copper_control_plane
+### Step 2. Start copper_control_plane
 
-Edit `copper_control_plane/config.yaml` (at least set `master_password`):
+Open `copper_control_plane/config.yaml` and set at least `master_password`.
 
 ```yaml
 master_password: "changeme"
 listen: "0.0.0.0:9446"
 database: "data/control_plane.db"
-# Optional — if omitted, the CLI asks at startup:
+# Optional. If you leave these out, the program asks for them at startup.
 # copper_bmc_host: "192.168.10.20"
 # copper_bmc_port: 9090
 ```
 
-Then:
+Then run it.
 
 ```bash
 cd copper_control_plane
 go run ./cmd/copper_control_plane -config config.yaml
 ```
 
-Open the UI at `http://<host>:9446/` and log in with `master_password`.
+Open `http://<host>:9446/` in your browser and log in with your `master_password`.
 
-| UI page | Plane | What it does |
-|---------|--------|----------------|
-| **OOB DHCP** | BMC / management | Addressing-only pool + MAC filters; **Save & push** to `copper_bmc` (agent DHCP role must be enabled). No PXE fields. |
-| **Data DHCP** | Host data NIC | Runs DHCPv4 **in this process** via `copper_dhcp`. Includes **next-server** (where to go) and **boot file** (what to download) for PXE. Port 67 needs root or `CAP_NET_BIND_SERVICE`. |
+The interface has two DHCP pages, one for each network.
 
-### Next-server vs boot file (Data DHCP)
+| Page | Network | What it does |
+|------|---------|--------------|
+| **OOB DHCP** | BMC / management network | Sets the address pool and MAC address filters. **Save & push** sends the settings to copper_bmc, which only works if you enabled the DHCP role when starting the agent. This page only handles addressing, so there are no PXE settings here. |
+| **Data DHCP** | Servers' data network cards | Runs a DHCPv4 server inside the control plane itself, using `copper_dhcp`. Includes the **next-server** and **boot file** settings for network booting (PXE). Using port 67 needs root or the `CAP_NET_BIND_SERVICE` permission. |
 
-They are two halves of the same PXE instruction:
+### Next-server and boot file, explained
 
-- **Next-server** — IP of the host holding boot files (usually TFTP). Sent as DHCP `siaddr` and option 66. Often a different machine than DHCP; if unset, many clients fall back to the DHCP server IP.
-- **Boot file** — name/path/URL to download from there (`pxelinux.0`, `ipxe.efi`, or `http://…/boot.ipxe`). Option 67 (and the legacy header `file` field when short enough).
+When a server boots over the network, it needs to know two things. Where should it fetch its boot file from, and which file should it fetch? These two settings answer those questions together.
 
-Example: next-server `10.0.0.5` + boot file `ipxe.efi` → client does TFTP get of `ipxe.efi` from `10.0.0.5`.
+**Next-server** is the "where". It's the IP address of the machine holding the boot files, usually a TFTP server. It's sent in the DHCP `siaddr` field and in option 66. This is often a different machine from the DHCP server. If you leave it blank, many servers simply fall back to the DHCP server's IP.
 
-## DHCP model
+**Boot file** is the "what". It's the name, path or URL of the file to download, such as `pxelinux.0`, `ipxe.efi` or `http://…/boot.ipxe`. It's sent in option 67, and also in the older `file` header field when the name is short enough to fit.
 
-| Piece | Role |
-|-------|------|
-| `copper_bmc` startup | Admin chooses whether this agent **may** run OOB DHCP |
-| **OOB DHCP** UI | Owns BMC addressing policy; push applies it on the agent |
-| **Data DHCP** UI | Owns data-NIC / PXE policy; apply starts DHCP in the control plane |
-| `copper_dhcp` | Shared library (`insomniacslk/dhcp`) used by both |
+For example, if next-server is `10.0.0.5` and boot file is `ipxe.efi`, the server downloads `ipxe.efi` from `10.0.0.5` over TFTP.
 
-## Build binaries (optional)
+## Who handles DHCP
+
+| Part | Responsibility |
+|------|----------------|
+| copper_bmc startup | The admin decides whether this agent is allowed to run OOB DHCP at all |
+| **OOB DHCP** page | Decides how BMCs get their addresses. Pushing applies those settings on the agent |
+| **Data DHCP** page | Decides addressing and PXE settings for the data network cards. Applying starts DHCP inside the control plane |
+| `copper_dhcp` | Shared DHCPv4 library, built on `insomniacslk/dhcp`, used by both of the above |
+
+## Building standalone binaries (optional)
+
+If you'd rather have compiled programs than use `go run`, build them like this.
 
 ```bash
 cd copper_bmc && go build -o copper_bmc ./cmd/copper_bmc
 cd ../copper_control_plane && go build -o copper_control_plane ./cmd/copper_control_plane
 ```
 
-## Layout
+## Project layout
 
 ```
 root_dir/
 ├── copper_dhcp/             # Shared DHCPv4 library
-├── copper_bmc/              # Bare-metal agent (media + Redfish + optional OOB DHCP)
-└── copper_control_plane/    # Inventory UI + SQLite + OOB policy + local data DHCP
+├── copper_bmc/              # Agent near the hardware (image hosting, Redfish, optional OOB DHCP)
+└── copper_control_plane/    # Web UI, SQLite inventory, OOB DHCP settings, data-network DHCP
 ```
