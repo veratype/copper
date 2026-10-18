@@ -48,23 +48,36 @@ func Run(cfg *config.Config) error {
 		act.Info("app", "DHCP role disabled (Redfish agent only)")
 	}
 
-	lldpTable := netx.NewLLDPTable()
-	if iface, err := netx.ResolveLLDPIface(cfg.MediaListener.Interface, cfg.MediaListener.BindAddr); err != nil {
-		act.Warn("lldp", "capture not started: %v", err)
-		lldpTable = nil
+	var lldpTable *netx.LLDPTable
+	var lldpErr string
+	if !cfg.LLDPRole {
+		act.Info("lldp", "LLDP capture disabled by admin — skipping (no CAP_NET_RAW needed)")
 	} else {
-		go func() {
-			err := netx.ListenLLDP(iface, lldpTable, func(format string, args ...any) {
-				act.Info("lldp", format, args...)
-			})
-			if err != nil {
-				act.Error("lldp", "%v", err)
-			}
-		}()
-		act.Info("lldp", "passive capture on OOB iface %s (GET /v1/net/lldp)", iface)
+		act.Info("lldp", "init: media NIC=%q bind=%q (LLDPRole=true)",
+			cfg.MediaListener.Interface, cfg.MediaListener.BindAddr)
+		iface, err := netx.ResolveLLDPIface(cfg.MediaListener.Interface, cfg.MediaListener.BindAddr)
+		if err != nil {
+			// Opted in but can't resolve NIC — warn only; do not stop media/command/DHCP.
+			// Note: CAP_NET_RAW is irrelevant here; the table is never created.
+			lldpErr = err.Error()
+			act.Error("lldp", "lldp init failed: %v — pick a concrete OOB media NIC (not 0.0.0.0/all)", err)
+		} else {
+			lldpTable = netx.NewLLDPTable()
+			go func() {
+				err := netx.ListenLLDP(iface, lldpTable, func(format string, args ...any) {
+					act.Info("lldp", format, args...)
+				})
+				if err != nil {
+					// Table stays non-nil so /v1/net/lldp returns 200 (possibly empty).
+					// CAP_NET_RAW / root failures land here, not in the 503 path.
+					act.Error("lldp", "lldp listen failed: %v (agent keeps running; /v1/net/lldp stays up)", err)
+				}
+			}()
+			act.Info("lldp", "passive capture on OOB iface %s (GET /v1/net/lldp)", iface)
+		}
 	}
 
-	cmdAPI := command.New(cfg, rf, dhcpMgr, lldpTable, act)
+	cmdAPI := command.New(cfg, rf, dhcpMgr, lldpTable, lldpErr, act)
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- mediaSrv.ListenAndServe() }()
@@ -94,17 +107,24 @@ func printBanner(cfg *config.Config, act *activity.Buffer) {
 		fmt.Println("  [OOB / BMC plane]  DHCP role disabled (Redfish agent only)")
 		fmt.Println()
 	}
-	fmt.Println("  [OOB / BMC plane]  LLDP (passive)")
-	fmt.Println("    GET /v1/net/lldp  — chassis_id enrichment for inventory")
-	fmt.Println("    needs CAP_NET_RAW / root + libpcap on the media NIC")
-	fmt.Println()
+	if cfg.LLDPRole {
+		fmt.Println("  [OOB / BMC plane]  LLDP capture ENABLED")
+		fmt.Println("    GET /v1/net/lldp  — chassis_id enrichment for inventory")
+		fmt.Println("    needs CAP_NET_RAW / root on the media NIC")
+		fmt.Println()
+	} else {
+		fmt.Println("  [OOB / BMC plane]  LLDP capture disabled")
+		fmt.Println()
+	}
 	fmt.Println("  [control-plane]    command API (multi-BMC via per-request target)")
 	fmt.Printf("    listen : http://%s/\n", cfg.CommandListener.Addr())
 	fmt.Printf("    nic    : %s\n", cfg.CommandListener.Interface)
 	fmt.Println("    routes :")
 	fmt.Println("      GET  /v1/health")
 	fmt.Println("      GET  /v1/activity")
-	fmt.Println("      GET  /v1/net/lldp")
+	if cfg.LLDPRole {
+		fmt.Println("      GET  /v1/net/lldp")
+	}
 	fmt.Println("      GET  /v1/system")
 	fmt.Println("      GET  /v1/system/storage")
 	fmt.Println("      GET  /v1/system/boot")

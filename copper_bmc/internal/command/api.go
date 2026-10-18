@@ -20,15 +20,16 @@ import (
 // Each Redfish operation requires a BMC target (from headers or JSON body)
 // so one agent can drive a collection of BMCs.
 type API struct {
-	cfg  *config.Config
-	rf   *redfishx.Client
-	dhcp *copper_dhcp.Manager // nil when DHCP role disabled at startup
-	lldp *netx.LLDPTable      // nil when capture not started
-	act  *activity.Buffer
+	cfg     *config.Config
+	rf      *redfishx.Client
+	dhcp    *copper_dhcp.Manager // nil when DHCP role disabled at startup
+	lldp    *netx.LLDPTable      // nil when capture not started
+	lldpErr string               // why lldp is nil despite LLDPRole (empty if ok / disabled)
+	act     *activity.Buffer
 }
 
-func New(cfg *config.Config, rf *redfishx.Client, dhcp *copper_dhcp.Manager, lldp *netx.LLDPTable, act *activity.Buffer) *API {
-	return &API{cfg: cfg, rf: rf, dhcp: dhcp, lldp: lldp, act: act}
+func New(cfg *config.Config, rf *redfishx.Client, dhcp *copper_dhcp.Manager, lldp *netx.LLDPTable, lldpErr string, act *activity.Buffer) *API {
+	return &API{cfg: cfg, rf: rf, dhcp: dhcp, lldp: lldp, lldpErr: lldpErr, act: act}
 }
 
 func (a *API) Handler() http.Handler {
@@ -84,6 +85,11 @@ func (a *API) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			},
 		},
 		"dhcp": dhcpInfo,
+		"lldp": map[string]any{
+			"role_enabled": a.cfg.LLDPRole,
+			"running":      a.lldp != nil,
+			"init_error":   a.lldpErr,
+		},
 		"note": "pass BMC target via X-Copper-BMC-* headers (or bmc JSON field on POST)",
 	})
 }
@@ -188,7 +194,13 @@ func (a *API) handleDHCPLeases(w http.ResponseWriter, _ *http.Request) {
 // GET /v1/net/lldp?chassis_id=…
 func (a *API) handleLLDP(w http.ResponseWriter, r *http.Request) {
 	if a.lldp == nil {
-		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("LLDP capture is not running on this agent"))
+		if !a.cfg.LLDPRole {
+			writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("LLDP capture is disabled on this agent (restart copper_bmc and enable LLDP if needed)"))
+		} else if a.lldpErr != "" {
+			writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("LLDP capture is not running on this agent: %s", a.lldpErr))
+		} else {
+			writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("LLDP capture is not running on this agent"))
+		}
 		return
 	}
 	q := r.URL.Query()

@@ -32,6 +32,9 @@ type Config struct {
 	// DHCPRole means this agent accepts DHCP config from copper_control_plane
 	// and may run a DHCPv4 server on the OOB plane. Config never comes from YAML.
 	DHCPRole bool
+	// LLDPRole means this agent passively captures LLDP on the OOB media NIC
+	// for chassis/MAC enrichment. Needs CAP_NET_RAW / root.
+	LLDPRole bool
 }
 
 type nicOption struct {
@@ -82,6 +85,16 @@ func Prompt(in *bufio.Reader) (*Config, error) {
 		return nil, err
 	}
 
+	fmt.Println()
+	fmt.Println("--- LLDP capture (optional) ---")
+	fmt.Println("If enabled, this agent listens for LLDP on the OOB media NIC to help")
+	fmt.Println("fill chassis_id / MAC in the control plane inventory.")
+	fmt.Println("Requires root or CAP_NET_RAW. Saying no skips LLDP; everything else still runs.")
+	lldpRole, err := askYesNo(in, "Enable LLDP capture on this agent?", false)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		MediaFolder: folder,
 		MediaListener: Listener{
@@ -95,6 +108,7 @@ func Prompt(in *bufio.Reader) (*Config, error) {
 			Interface: cmdIface,
 		},
 		DHCPRole: dhcpRole,
+		LLDPRole: lldpRole,
 	}, nil
 }
 
