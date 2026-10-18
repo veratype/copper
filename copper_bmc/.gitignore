@@ -6,7 +6,6 @@
 *.dll
 *.so
 *.dylib
-copper_bmc
 
 # Test / coverage
 *.test

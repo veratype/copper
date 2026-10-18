@@ -6,7 +6,6 @@
 *.dll
 *.so
 *.dylib
-copper_control_plane
 
 # Data
 /data/
