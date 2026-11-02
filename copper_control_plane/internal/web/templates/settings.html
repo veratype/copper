@@ -1,0 +1,106 @@
+{{define "content"}}
+<section class="narrow">
+  <div class="row">
+    <div>
+      <h1>Settings</h1>
+      <p class="muted">Session, batch runtime, live-OS SSH, and data-plane media. Stored in the control-plane database.</p>
+    </div>
+    <div class="actions">
+      <a href="/">Back to servers</a>
+    </div>
+  </div>
+
+  <form method="post" action="/settings" class="stack panel">
+    <h2>Web session</h2>
+    <p class="muted">How long you stay signed in. The cookie is renewed on every request while you use the UI (Jobs polling, Deploy, etc.), so an active admin is not kicked mid-work. Default 12 hours; max 720 (30 days).</p>
+    <label>Sign-out timeout (hours)
+      <input name="session_timeout_hours" type="number" min="1" max="720" required value="{{.Session.TimeoutHours}}">
+    </label>
+
+    <h2>Live OS SSH</h2>
+    <p class="muted">Shared credentials for the data-plane live image. Control plane SSHs to each server’s Data DHCP IP (from inventory NIC MACs + leases) to run <code>ssacli</code> / <code>storcli</code> and OS provision. User must be a sudoer. Leave password blank to keep the stored value.</p>
+    <label>Username
+      <input name="live_os_username" type="text" autocomplete="username" value="{{.LiveOSSSH.Username}}" placeholder="e.g. ubuntu">
+    </label>
+    <label>Password
+      <input name="live_os_password" type="password" autocomplete="new-password" value="" placeholder="{{if .LiveOSSSH.Password}}•••••••• (unchanged if blank){{else}}required for Detect RAID / Deploy{{end}}">
+    </label>
+    <label>SSH port
+      <input name="live_os_port" type="number" min="1" max="65535" value="{{.LiveOSSSH.Port}}">
+    </label>
+
+    <h2>Data media (cloud images)</h2>
+    <p class="muted">HTTP file server on the <strong>data plane</strong> (like copper_bmc media on OOB). Drop Ubuntu cloud images into the folder; live hosts pull them when provisioning. Prefer a concrete Bind IP the servers can reach (or rely on the Data DHCP NIC for Base URL).</p>
+    <label class="check">
+      <input type="checkbox" name="data_media_enabled" value="true" {{if .DataMedia.Enabled}}checked{{end}}>
+      Enable data media server
+    </label>
+    <label>Listen port
+      <input name="data_media_port" type="number" min="1" max="65535" value="{{.DataMedia.Port}}">
+    </label>
+    <label>Folder on disk
+      <input name="data_media_folder" type="text" value="{{.DataMedia.Folder}}" placeholder="/var/lib/copper/data-media" spellcheck="false">
+    </label>
+    <label>Bind address
+      <input name="data_media_bind" type="text" value="{{.DataMedia.Bind}}" placeholder="0.0.0.0 or a data-plane IPv4" spellcheck="false">
+    </label>
+
+    <h2>Batch executors</h2>
+    <p class="muted">How many servers to process at once (Probe, Inventory, Mount, Detect RAID, and <strong>Deploy OS</strong> writes). Default 3; hard max 16. Raising this for Deploy can saturate the data-media NIC while hosts download the cloud image.</p>
+    <label>Parallel executors
+      <input name="executors" type="number" min="1" max="16" required value="{{.BatchRuntime.Executors}}">
+    </label>
+
+    <h2>Agent watch</h2>
+    <p class="muted">How often the control plane checks <code>copper_bmc</code> health and auto-repushes OOB DHCP if the agent is up but DHCP is not running. Default 60 seconds; range 5–3600. Takes effect on the next tick (no restart).</p>
+    <label>copper_bmc check interval (seconds)
+      <input name="agent_watch_seconds" type="number" min="5" max="3600" required value="{{.BatchRuntime.AgentWatchSeconds}}">
+    </label>
+
+    <h2>Per-action timeouts</h2>
+    <p class="muted">Seconds for each server call in a batch. Detect talks SSH + RAID CLIs on the live OS. Mount &amp; boot also waits for Data DHCP + SSH after reboot to claim live-OS NIC MACs into inventory (for NICs Redfish omitted). Provision covers cloud-image download + write.</p>
+    <label>Inventory timeout (seconds)
+      <input name="timeout_inventory" type="number" min="10" max="900" required value="{{.BatchRuntime.Timeouts.Inventory}}">
+    </label>
+    <label>Reboot timeout (seconds)
+      <input name="timeout_reboot" type="number" min="5" max="300" required value="{{.BatchRuntime.Timeouts.Reboot}}">
+    </label>
+    <label>Mount &amp; boot timeout (seconds)
+      <input name="timeout_mount" type="number" min="10" max="1800" required value="{{.BatchRuntime.Timeouts.Mount}}">
+    </label>
+    <label>Probe timeout (seconds)
+      <input name="timeout_probe" type="number" min="5" max="300" required value="{{.BatchRuntime.Timeouts.Probe}}">
+    </label>
+    <label>Delete timeout (seconds)
+      <input name="timeout_delete" type="number" min="5" max="120" required value="{{.BatchRuntime.Timeouts.Delete}}">
+    </label>
+    <label>Detect RAID timeout (seconds)
+      <input name="timeout_detect" type="number" min="15" max="300" required value="{{.BatchRuntime.Timeouts.Detect}}">
+    </label>
+    <label>Provision OS timeout (seconds)
+      <input name="timeout_provision" type="number" min="120" max="14400" required value="{{.BatchRuntime.Timeouts.Provision}}">
+    </label>
+
+    <div class="actions">
+      <button type="submit">Save settings</button>
+      <a class="btn ghost" href="/settings">Reset form</a>
+    </div>
+  </form>
+
+  <form method="post" action="/settings/purge" class="stack panel" style="margin-top:1.5rem;border-color:rgba(200,60,40,0.35)"
+        onsubmit="return confirm('This permanently deletes all servers, labels, jobs, snapshots, and DHCP policies/leases on the control plane, and disables/clears OOB DHCP on copper_bmc (listen or poll). Session / SSH / media settings are kept. Continue?')">
+    <h2>Danger zone — purge all</h2>
+    <p class="muted">
+      Wipe inventory and DHCP state: every server, label, job, snapshot, Data DHCP leases/bindings,
+      saved OOB + Data DHCP policies, and poll-mode agent command queue / heartbeat cache.
+      Also stops Data DHCP here and, when copper_bmc is reachable with the DHCP role on,
+      disables OOB DHCP and clears its leases (works in <strong>listen</strong> and <strong>poll</strong> agent modes).
+      Does <em>not</em> remove session timeout, live-OS SSH, data media, or batch executor settings.
+    </p>
+    <label>Type <code>PURGE</code> to confirm
+      <input name="confirm" type="text" autocomplete="off" spellcheck="false" placeholder="PURGE" required>
+    </label>
+    <button type="submit" class="btn danger">Purge all inventory &amp; DHCP</button>
+  </form>
+</section>
+{{end}}

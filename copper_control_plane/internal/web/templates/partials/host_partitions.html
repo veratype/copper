@@ -1,0 +1,66 @@
+{{define "host_partitions"}}
+<style>
+.host-parts{
+  --hp-ink:#1c2228; --hp-ink2:#55606b; --hp-line:#c5ccd3; --hp-panel:#f7f8f9; --hp-panel2:#dfe3e7;
+  --hp-amber:#e8a317; --hp-green:#3fb950; --hp-red:#d94848; --hp-blue:#2f6fed;
+  margin-top:18px; color:var(--hp-ink);
+}
+.host-parts.panel{background:var(--hp-panel);border:1px solid var(--hp-line);border-radius:10px;padding:14px 16px}
+.host-parts h2{margin:0 0 10px;font-size:15px;font-weight:700}
+.host-parts .sub{color:var(--hp-ink2);font-size:13px;margin:0 0 10px}
+.host-parts .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.host-parts .btn{padding:8px 14px;border-radius:6px;border:1px solid var(--hp-line);background:#fff;cursor:pointer;font:inherit;color:inherit}
+.host-parts .btn:hover{background:var(--hp-panel2)}
+.host-parts .btn.danger{color:var(--hp-red);border-color:var(--hp-red)}
+.host-parts .btn:disabled{opacity:.45;cursor:not-allowed}
+.host-parts .parts-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+.host-parts .parts-table th,.host-parts .parts-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--hp-line);vertical-align:top}
+.host-parts .parts-table th{color:var(--hp-ink2);font-weight:600}
+.host-parts .parts-table .disk-row td{background:var(--hp-panel2);font-weight:700}
+.host-parts .parts-table .prot{color:var(--hp-amber)}
+.host-parts .parts-table .esp{color:var(--hp-red);font-weight:600}
+.host-parts .parts-table .bay-link{font-weight:600;color:var(--hp-ink)}
+.host-parts .parts-table .bay-link.held{color:#9a7b12}
+.host-parts .parts-table .unmapped{color:var(--hp-ink2);font-weight:400}
+.host-parts .parts-empty{color:var(--hp-ink2);padding:8px 0}
+.host-parts .parts-toolbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:10px}
+.host-parts .parts-toolbar .stat{font-size:13px;color:var(--hp-ink2)}
+.host-parts .parts-toolbar .stat b{color:var(--hp-ink)}
+.host-parts .parts-toolbar input[type=search]{font:inherit;padding:6px 10px;border:1px solid var(--hp-line);border-radius:6px;background:#fff;color:var(--hp-ink);min-width:180px;flex:1 1 180px;max-width:320px}
+.host-parts .parts-layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:14px;margin-top:12px;min-width:0}
+@media (max-width:900px){.host-parts .parts-layout{grid-template-columns:1fr}}
+.host-parts .parts-list-wrap{border:1px solid var(--hp-line);border-radius:8px;background:var(--hp-panel2);min-width:0;display:flex;flex-direction:column;max-height:420px}
+.host-parts .parts-list-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--hp-line);font-size:12px;color:var(--hp-ink2);flex-shrink:0}
+.host-parts .parts-list-head label{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.host-parts .parts-list{overflow:auto;flex:1;position:relative;min-height:200px}
+.host-parts .parts-list-inner{position:relative;width:100%}
+.host-parts .parts-row{position:absolute;left:0;right:0;display:flex;align-items:center;gap:8px;padding:0 10px;box-sizing:border-box;border-bottom:1px solid var(--hp-line);cursor:pointer;font-size:13px}
+.host-parts .parts-row:hover{background:rgba(0,0,0,.04)}
+.host-parts .parts-row.active{background:rgba(47,111,237,.12)}
+.host-parts .parts-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.host-parts .parts-row .meta{font-size:11px;color:var(--hp-ink2);flex-shrink:0}
+.host-parts .parts-row .meta.err{color:var(--hp-red)}
+.host-parts .parts-row .meta.esp{color:var(--hp-red);font-weight:600}
+.host-parts .parts-row .meta.ok{color:var(--hp-green)}
+.host-parts .parts-detail{min-width:0;border:1px solid var(--hp-line);border-radius:8px;padding:10px 12px;background:var(--hp-panel);max-height:420px;overflow:auto}
+.host-parts .parts-detail h3{margin:0 0 8px;font-size:14px}
+.host-parts .hint{font-size:13px;color:var(--hp-ink2);margin-top:8px}
+.host-parts .error{color:var(--hp-red)}
+</style>
+<section class="host-parts panel" data-copper-host-parts>
+  <h2>Host partitions</h2>
+  <p class="sub">Scan every OS-visible disk — HBA, JBOD, NVMe, md arrays, and RAID logical drives — and clear leftover partition tables (including ESP) so old OS/EFI volumes cannot compete after Deploy. This zaps GPT/MBR signatures — it does <b>not</b> zero the whole disk. The live-OS / install-media disk is always skipped. In batch mode, check the servers you want to wipe; only the focused server’s table is shown (list stays fast at 1000+ hosts).</p>
+  <div class="btnrow">
+    <button class="btn" type="button" data-hp="scan">Scan partitions</button>
+    <button class="btn" type="button" data-hp="select-all" disabled>Select all scanned</button>
+    <button class="btn" type="button" data-hp="select-esp" disabled>Select with ESP</button>
+    <button class="btn" type="button" data-hp="select-none" disabled>Select none</button>
+    <button class="btn danger" type="button" data-hp="wipe" disabled>Clear selected partitions</button>
+  </div>
+  <div class="parts-toolbar" data-hp="toolbar" hidden>
+    <input type="search" data-hp="filter" placeholder="Filter servers…" autocomplete="off">
+    <span class="stat" data-hp="stats"></span>
+  </div>
+  <div data-hp="view" class="parts-empty">Scan to list disks and partitions on the live OS.</div>
+</section>
+{{end}}

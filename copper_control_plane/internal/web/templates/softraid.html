@@ -1,0 +1,611 @@
+{{define "content"}}
+<style>
+.sr-page{max-width:1100px;margin:0 auto;padding:8px 0 48px}
+.sr-page header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px;margin-bottom:16px}
+.sr-page header h1{margin:0;font-size:22px}
+.sr-page .meta{color:var(--muted,#55606b);flex:1}
+.sr-page .grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.9fr);gap:16px}
+@media(max-width:960px){.sr-page .grid{grid-template-columns:1fr}}
+.sr-page .panel{background:var(--panel,#f7f8f9);border:1px solid var(--line,#c5ccd3);border-radius:10px;padding:14px 16px}
+.sr-page .panel h2{margin:0 0 10px;font-size:15px}
+.sr-page table{width:100%;border-collapse:collapse;font-size:13px}
+.sr-page th,.sr-page td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line,#c5ccd3);vertical-align:top}
+.sr-page th{color:#55606b;font-weight:600}
+.sr-page .btnrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.sr-page .hint{font-size:13px;color:#55606b;margin-top:8px}
+.sr-page .hint.warn{color:#a15c00}
+.sr-page .log{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:#20262b;color:#cfd6dc;border-radius:8px;padding:12px;max-height:320px;overflow:auto;white-space:pre-wrap;margin-top:14px}
+.sr-page .log:empty::before{content:"Soft RAID commands echo here.";color:#6c757e}
+.sr-page .chip{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:2px 7px;border-radius:4px;background:#dfe3e7;margin:2px 4px 2px 0}
+.sr-page .state-ok{color:#1a7f37}.sr-page .state-warn{color:#a15c00}.sr-page .state-bad{color:#d94848}
+.sr-page .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.sr-page .field label{font-size:13px;color:#55606b}
+.sr-page select,.sr-page input[type=text]{font:inherit;padding:7px 10px;border:1px solid #c5ccd3;border-radius:6px;background:#fff}
+.sr-page .array{border-top:1px solid #c5ccd3;padding:12px 0}
+.sr-page .array:first-of-type{border-top:0;padding-top:0}
+.sr-page .array .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sr-page .array .acts{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
+.sr-page .selbox{background:#dfe3e7;border-radius:8px;padding:8px 10px;margin-bottom:10px;min-height:40px}
+.sr-page .srv-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.sr-page .srv-tabs button{padding:6px 10px;border-radius:6px;border:1px solid #c5ccd3;background:#fff;cursor:pointer}
+.sr-page .srv-tabs button.on{background:#e8a317;border-color:#e8a317;font-weight:700}
+.sr-page .batch-banner{margin:0 0 12px;padding:8px 12px;border-radius:8px;font-size:13px;border:1px solid #c5ccd3;background:#f7f8f9}
+.sr-page .batch-banner.ok{border-color:#3fb950;color:#1a7f37}
+.sr-page .batch-banner.bad{border-color:#d94848;color:#a32020;background:#fff5f5}
+</style>
+
+<section class="sr-page" id="softraid-page">
+  <script type="application/json" id="page-server-ids-json">{{.ServerIDs}}</script>
+  <header>
+    <h1>Soft RAID</h1>
+    <p class="meta" id="srMeta">mdadm software RAID on the live OS. Create arrays, then Deploy writes the cloud image onto <code>/dev/mdN</code>.</p>
+    <div class="actions">
+      <a class="btn ghost" href="/">Servers</a>
+      <a class="btn ghost" id="linkDeploy" href="#">Deploy</a>
+      <button type="button" class="btn" id="btnScan">Scan</button>
+      <button type="button" class="btn ghost" id="btnAssembleScan">Assemble --scan</button>
+    </div>
+  </header>
+
+  <p id="copper-page-busy" class="flash" hidden></p>
+  <p class="error" id="installedCaution" hidden></p>
+  <p class="batch-banner" id="batchBanner" hidden></p>
+  <div class="srv-tabs" id="srvTabs" hidden></div>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="panel">
+        <h2>Disks</h2>
+        <p class="hint">Select free disks to create an array. Foreign = leftover md superblock (zero before reuse). Batch mode remaps the same size/order slots on every matching host.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Device</th><th>Size</th><th>State</th><th>Model</th></tr></thead>
+            <tbody id="diskBody"><tr><td colspan="5" class="hint">Scan to load disks.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:16px">
+        <h2>Arrays</h2>
+        <div id="arrayBody"><p class="hint">No arrays yet.</p></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>Create array</h2>
+      <div class="selbox" id="selbox">No disks selected</div>
+      <div class="field">
+        <label for="mdName">Name</label>
+        <input id="mdName" type="text" value="md0" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="mdLevel">RAID level</label>
+        <select id="mdLevel"></select>
+      </div>
+      <div class="field">
+        <label for="mdMeta">Metadata</label>
+        <select id="mdMeta">
+          <option value="1.0" selected>1.0 (boot-friendly)</option>
+          <option value="1.2">1.2</option>
+          <option value="1.1">1.1</option>
+          <option value="0.90">0.90</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="mdLayout">RAID10 layout (optional)</label>
+        <input id="mdLayout" type="text" placeholder="n2" spellcheck="false">
+      </div>
+      <label class="check"><input type="checkbox" id="mdForce"> Force</label>
+      <p class="hint" id="createHint"></p>
+      <div class="btnrow">
+        <button type="button" class="btn primary" id="btnCreate" disabled>Create</button>
+        <button type="button" class="btn ghost" id="btnZero" disabled>Zero superblock on selection</button>
+      </div>
+      <p class="hint">After create, Soft RAID layout is saved for Deploy (mode <code>soft_raid</code>).</p>
+    </section>
+  </div>
+
+  {{template "host_partitions" .}}
+
+  <div class="log" id="srLog" aria-live="polite"></div>
+</section>
+
+<script>
+(function(){
+  var IDS = {{.ServerIDs}};
+  var META = {{.StorageMeta}};
+  var LEVELS = {{.SoftRAIDLevels}};
+  var RULES = {
+    "0":{min:2,even:false},
+    "1":{min:2,even:false},
+    "4":{min:3,even:false},
+    "5":{min:3,even:false},
+    "6":{min:4,even:false},
+    "10":{min:4,even:true},
+    "linear":{min:2,even:false}
+  };
+  var focus = IDS[0];
+  var batchMode = IDS.length > 1;
+  var batchCompatible = !batchMode;
+  var batchBlockedReason = "";
+  var topoById = Object.create(null);
+  var topo = null;
+  var selected = {};
+  var busy = false;
+
+  function $(id){ return document.getElementById(id); }
+  function log(line){
+    var el = $("srLog");
+    var ts = new Date().toISOString().slice(11,19);
+    el.textContent += (el.textContent ? "\n" : "") + "["+ts+"] " + line;
+    el.scrollTop = el.scrollHeight;
+  }
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+      return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c];
+    });
+  }
+  function metaFor(id){
+    for (var i=0;i<META.length;i++) if (META[i].id===id) return META[i];
+    return {id:id,name:String(id)};
+  }
+  function setBusy(v){
+    busy = !!v;
+    ["btnScan","btnAssembleScan","btnCreate","btnZero"].forEach(function(id){
+      var b=$(id); if(b && id!=="btnCreate" && id!=="btnZero") b.disabled = busy;
+    });
+    updateCreate();
+  }
+  async function pollJob(jobId){
+    if (!window.CopperJobs || !CopperJobs.pollUntilDone) throw new Error("job poller missing");
+    return CopperJobs.pollUntilDone(jobId, 600000, function(job){
+      if (job && job.progress) log(job.phase+": "+job.progress);
+    });
+  }
+  async function api(method, url, body){
+    var opts = {method:method, credentials:"same-origin", headers:{"Accept":"application/json"}};
+    if (body!==undefined){
+      opts.headers["Content-Type"]="application/json";
+      opts.body = JSON.stringify(body);
+    }
+    var resp = await fetch(url, opts);
+    var data = await resp.json().catch(function(){ return {}; });
+    if (!resp.ok && !data.job_id) throw new Error((data && data.error) || ("HTTP "+resp.status));
+    return data;
+  }
+
+  // Same order as BatchFingerprint (size → state → path) so indexes align across hosts.
+  function disksSorted(top){
+    return ((top && top.disks) || []).slice().sort(function(a,b){
+      var cs = String(a.size||"").localeCompare(String(b.size||""));
+      if (cs) return cs;
+      var st = String(a.state||"").localeCompare(String(b.state||""));
+      if (st) return st;
+      return String(a.path||"").localeCompare(String(b.path||""));
+    });
+  }
+
+  function remapDevices(focusDevices, focusTopo, targetTopo){
+    var src = disksSorted(focusTopo);
+    var dst = disksSorted(targetTopo);
+    if (src.length !== dst.length) return null;
+    var out = [];
+    for (var i=0;i<focusDevices.length;i++){
+      var p = focusDevices[i];
+      var idx = -1;
+      for (var j=0;j<src.length;j++){
+        if (src[j].path === p){ idx = j; break; }
+      }
+      if (idx < 0 || !dst[idx]) return null;
+      out.push(dst[idx].path);
+    }
+    return out;
+  }
+
+  function actionForHost(action, hostId){
+    var a = JSON.parse(JSON.stringify(action));
+    if (!batchMode || hostId === focus) return a;
+    var focusTopo = topoById[focus];
+    var hostTopo = topoById[hostId];
+    if (!focusTopo || !hostTopo) return null;
+    if (a.devices && a.devices.length){
+      var mapped = remapDevices(a.devices, focusTopo, hostTopo);
+      if (!mapped) return null;
+      a.devices = mapped;
+    }
+    if (a.device){
+      var one = remapDevices([a.device], focusTopo, hostTopo);
+      if (!one || !one.length) return null;
+      a.device = one[0];
+    }
+    if (a.spare_devices && a.spare_devices.length){
+      var sp = remapDevices(a.spare_devices, focusTopo, hostTopo);
+      if (!sp) return null;
+      a.spare_devices = sp;
+    }
+    return a;
+  }
+
+  function recomputeBatch(){
+    var banner = $("batchBanner");
+    if (!batchMode){
+      batchCompatible = true;
+      batchBlockedReason = "";
+      if (banner) banner.hidden = true;
+      return;
+    }
+    var fps = [];
+    var missing = [];
+    IDS.forEach(function(id){
+      var t = topoById[id];
+      if (!t || !t.ok){ missing.push(metaFor(id).name); return; }
+      fps.push({id:id, fp:t.batch_fingerprint || ""});
+    });
+    if (missing.length){
+      batchCompatible = false;
+      batchBlockedReason = "Scan all servers first (missing/failed: "+missing.join(", ")+").";
+    } else if (!fps.length || !fps[0].fp){
+      batchCompatible = false;
+      batchBlockedReason = "No Soft RAID batch fingerprint yet — Scan again.";
+    } else {
+      var base = fps[0].fp;
+      var mismatch = [];
+      for (var i=1;i<fps.length;i++){
+        if (fps[i].fp !== base) mismatch.push(metaFor(fps[i].id).name);
+      }
+      if (mismatch.length){
+        batchCompatible = false;
+        batchBlockedReason = "Soft RAID disk/array layout differs on: "+mismatch.join(", ")+
+          ". Batch Soft RAID needs the same disk sizes/states and array shape. Open servers one at a time, or select a matching set.";
+      } else {
+        batchCompatible = true;
+        batchBlockedReason = "";
+      }
+    }
+    if (banner){
+      banner.hidden = false;
+      banner.className = "batch-banner "+(batchCompatible?"ok":"bad");
+      banner.textContent = batchCompatible
+        ? ("Batch ready · "+IDS.length+" servers have identical Soft RAID layouts. Create/Assemble/Zero run on all.")
+        : ("Batch blocked · "+batchBlockedReason);
+    }
+  }
+
+  function renderTabs(){
+    var tabs = $("srvTabs");
+    if (IDS.length < 2){ tabs.hidden = true; return; }
+    tabs.hidden = false;
+    tabs.innerHTML = IDS.map(function(id){
+      var m = metaFor(id);
+      return '<button type="button" data-id="'+id+'" class="'+(id===focus?"on":"")+'">'+esc(m.name)+'</button>';
+    }).join("");
+    tabs.querySelectorAll("button").forEach(function(b){
+      b.addEventListener("click", function(){
+        focus = Number(b.getAttribute("data-id"));
+        selected = {};
+        topo = topoById[focus] || null;
+        renderTabs();
+        renderAll();
+      });
+    });
+  }
+
+  function stateClass(st){
+    st = String(st||"").toLowerCase();
+    if (/faulty|failed|broken/.test(st)) return "state-bad";
+    if (/degraded|recover|resync|reshape|foreign|spare/.test(st)) return "state-warn";
+    if (/clean|active|free|member/.test(st)) return "state-ok";
+    return "";
+  }
+
+  function renderDisks(){
+    var body = $("diskBody");
+    if (!topo || !topo.disks || !topo.disks.length){
+      body.innerHTML = '<tr><td colspan="5" class="hint">'+(topo && topo.error ? esc(topo.error) : "No disks.")+'</td></tr>';
+      return;
+    }
+    body.innerHTML = topo.disks.map(function(d){
+      var free = d.state==="free" || d.state==="foreign";
+      var checked = selected[d.path] ? " checked" : "";
+      var dis = free ? "" : " disabled";
+      return '<tr><td><input type="checkbox" data-path="'+esc(d.path)+'"'+checked+dis+'></td>'+
+        '<td><code>'+esc(d.path)+'</code></td><td>'+esc(d.size)+'</td>'+
+        '<td class="'+stateClass(d.state)+'">'+esc(d.state)+(d.array?(" → "+esc(d.array)):"")+'</td>'+
+        '<td>'+esc(d.model||d.tran||"")+'</td></tr>';
+    }).join("");
+    body.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener("change", function(){
+        if (cb.checked) selected[cb.getAttribute("data-path")] = true;
+        else delete selected[cb.getAttribute("data-path")];
+        updateCreate();
+      });
+    });
+  }
+
+  function renderArrays(){
+    var el = $("arrayBody");
+    if (!topo || !topo.arrays || !topo.arrays.length){
+      el.innerHTML = '<p class="hint">No md arrays on this host.</p>';
+      return;
+    }
+    el.innerHTML = topo.arrays.map(function(a){
+      var mem = (a.members||[]).map(function(m){
+        return '<span class="chip">'+esc(m.device)+' · '+esc(m.role)+'</span>';
+      }).join("");
+      return '<div class="array" data-name="'+esc(a.name)+'" data-path="'+esc(a.path)+'">'+
+        '<div class="row"><strong>'+esc(a.path)+'</strong> <span>'+esc(a.level)+'</span> '+
+        '<span class="'+stateClass(a.state)+'">'+esc(a.state)+'</span> <span>'+esc(a.size||"")+'</span>'+
+        '<span class="acts">'+
+          '<button type="button" class="btn sm" data-op="stop">Stop</button>'+
+          '<button type="button" class="btn sm danger" data-op="remove">Remove</button>'+
+        '</span></div>'+
+        '<div class="hint">UUID '+esc(a.uuid||"—")+' · metadata '+esc(a.metadata||"—")+' · raid_devices '+esc(a.raid_devices||"—")+'</div>'+
+        '<div>'+mem+'</div>'+
+        '<div class="btnrow">'+
+          '<button type="button" class="btn sm" data-op="fail">Fail selected disk</button>'+
+          '<button type="button" class="btn sm" data-op="remove-device">Remove selected disk</button>'+
+          '<button type="button" class="btn sm" data-op="add">Add selected as member</button>'+
+          '<button type="button" class="btn sm" data-op="add-spare">Add selected as spare</button>'+
+        '</div></div>';
+    }).join("");
+    el.querySelectorAll("button[data-op]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var arr = b.closest(".array");
+        var name = arr.getAttribute("data-name");
+        var op = b.getAttribute("data-op");
+        var paths = Object.keys(selected);
+        if (op==="stop" || op==="remove"){
+          runExec({op:op, name:name});
+          return;
+        }
+        if (paths.length!==1){
+          window.alert("Select exactly one disk for "+op);
+          return;
+        }
+        runExec({op:op, name:name, device:paths[0]});
+      });
+    });
+  }
+
+  function updateCreate(){
+    var paths = Object.keys(selected);
+    var batchNote = "";
+    if (batchMode && batchCompatible) batchNote = " · batch ×"+IDS.length;
+    else if (batchMode && !batchCompatible) batchNote = " · batch blocked";
+    $("selbox").textContent = paths.length ? (paths.length+" selected: "+paths.join(", ")+batchNote) : ("No disks selected"+batchNote);
+    var level = $("mdLevel").value;
+    var rule = RULES[level] || {min:2,even:false};
+    var ok = !busy && paths.length >= rule.min && (!rule.even || paths.length%2===0);
+    if (batchMode && !batchCompatible) ok = false;
+    $("btnCreate").disabled = !ok;
+    $("btnZero").disabled = busy || paths.length===0 || (batchMode && !batchCompatible);
+    var hint = "RAID "+level+" needs ≥"+rule.min+(rule.even?" even":"")+" disks.";
+    if (paths.length && paths.length < rule.min) hint += " Select more disks.";
+    if (rule.even && paths.length%2===1) hint += " Count must be even.";
+    if (batchMode && batchCompatible) hint += " Will create on all "+IDS.length+" matching servers.";
+    if (batchMode && !batchCompatible) hint = batchBlockedReason || "Batch blocked.";
+    var hintEl = $("createHint");
+    hintEl.textContent = hint;
+    hintEl.classList.toggle("warn", batchMode && !batchCompatible);
+    var asm = $("btnAssembleScan");
+    if (asm) asm.disabled = busy || (batchMode && !batchCompatible);
+  }
+
+  function renderAll(){
+    var m = metaFor(focus);
+    $("srMeta").innerHTML = esc(m.name)+(m.data_ip?(" · live <code>"+esc(m.data_ip)+"</code>"):" · <span class=\"warn\">no Data DHCP lease</span>")+
+      (topo && topo.tool ? (" · "+esc(topo.tool)) : "")+
+      (batchMode ? (" · <b>"+IDS.length+" servers</b>") : "");
+    $("linkDeploy").href = batchMode ? ("/deploy?ids="+IDS.join(",")) : ("/servers/"+focus+"/deploy");
+    recomputeBatch();
+    renderDisks();
+    renderArrays();
+    updateCreate();
+  }
+
+  async function loadCachedOne(id){
+    var data = await api("GET", "/api/servers/"+id+"/softraid");
+    if (data.rules) RULES = data.rules;
+    var t = data.topology || null;
+    if (t) topoById[id] = t;
+    return t;
+  }
+
+  async function loadCached(){
+    try{
+      if (batchMode){
+        for (var i=0;i<IDS.length;i++){
+          try { await loadCachedOne(IDS[i]); }
+          catch(e){ log("load "+metaFor(IDS[i]).name+": "+e.message); }
+        }
+      } else {
+        await loadCachedOne(focus);
+      }
+      topo = topoById[focus] || null;
+      renderAll();
+    }catch(e){
+      log("load: "+e.message);
+    }
+  }
+
+  async function runScan(){
+    setBusy(true);
+    try{
+      if (!batchMode){
+        log("scan "+metaFor(focus).name);
+        var data = await api("POST", "/api/servers/"+focus+"/softraid/scan");
+        await pollJob(data.job_id);
+      } else {
+        log("batch scan "+IDS.length+" servers");
+        var batch = await api("POST", "/api/softraid/scan", {server_ids: IDS});
+        var jobs = batch.jobs || [];
+        for (var i=0;i<jobs.length;i++){
+          var j = jobs[i];
+          if (j.error){ log(metaFor(j.server_id).name+" scan enqueue failed: "+j.error); continue; }
+          log("scan "+(j.name||j.server_id));
+          try { await pollJob(j.job_id); }
+          catch(e){ log("scan FAILED "+(j.name||j.server_id)+": "+e.message); }
+        }
+      }
+      await loadCached();
+      var nArr = (topo && topo.arrays) ? topo.arrays.length : 0;
+      var nDisk = (topo && topo.disks) ? topo.disks.length : 0;
+      log("scan done (focus): "+nArr+" array(s), "+nDisk+" disk(s)"+
+        (batchMode ? (batchCompatible ? " · batch ready" : " · batch blocked") : ""));
+    }catch(e){
+      log("scan FAILED: "+e.message);
+      await loadCached();
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  async function runExecOnServer(id, action){
+    var data = await api("POST", "/api/servers/"+id+"/softraid/exec", {action:action});
+    var job = await pollJob(data.job_id);
+    if (job && job.result){
+      var r = typeof job.result==="string" ? JSON.parse(job.result) : job.result;
+      if (r && r.output) log(metaFor(id).name+": "+String(r.output).trim());
+      if (r && r.topology) topoById[id] = r.topology;
+    }
+  }
+
+  async function runExec(action){
+    if (batchMode && !batchCompatible){
+      log("batch blocked: "+batchBlockedReason);
+      window.alert(batchBlockedReason || "Batch Soft RAID blocked — layouts differ");
+      return;
+    }
+    setBusy(true);
+    try{
+      var targets = batchMode ? IDS.slice() : [focus];
+      log("exec "+JSON.stringify(action)+(batchMode ? (" ×"+targets.length) : ""));
+      for (var i=0;i<targets.length;i++){
+        var id = targets[i];
+        var a = actionForHost(action, id);
+        if (!a){
+          log(metaFor(id).name+" FAILED: could not remap devices for this host");
+          continue;
+        }
+        try{
+          await runExecOnServer(id, a);
+          log("exec done "+metaFor(id).name+" ("+action.op+")");
+        }catch(e){
+          log("exec FAILED "+metaFor(id).name+" ("+action.op+"): "+e.message);
+        }
+      }
+      selected = {};
+      await loadCached();
+    }catch(e){
+      log("exec FAILED ("+(action && action.op ? action.op : "?")+"): "+e.message);
+      await loadCached();
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  var sel = $("mdLevel");
+  (LEVELS||["0","1","5","6","10"]).forEach(function(lv){
+    var o = document.createElement("option");
+    o.value = lv; o.textContent = "RAID "+lv;
+    if (lv==="1") o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", updateCreate);
+
+  $("btnScan").addEventListener("click", runScan);
+  $("btnAssembleScan").addEventListener("click", function(){
+    runExec({op:"assemble-scan", force:true});
+  });
+  function confirmInstalledSoft(action){
+    if (!window.CopperInstalled) return true;
+    var names = window.CopperInstalled.installedNamesFromMeta(META);
+    return window.CopperInstalled.confirmDestructive(names, action);
+  }
+  (function showInstalledBanner(){
+    var el = $("installedCaution");
+    if (!el || !window.CopperInstalled) return;
+    var names = window.CopperInstalled.installedNamesFromMeta(META);
+    if (!names.length) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = "CAUTION: labeled \"installed\" — " + names.join(", ") +
+      ". Soft RAID changes can destroy a provisioned OS.";
+  })();
+
+  $("btnCreate").addEventListener("click", function(){
+    var paths = Object.keys(selected);
+    if (batchMode && !batchCompatible){
+      window.alert(batchBlockedReason || "Batch blocked");
+      return;
+    }
+    var msg = "Create RAID "+$("mdLevel").value+" on "+paths.join(", ");
+    if (batchMode) msg += "\n\nThis will run on all "+IDS.length+" matching servers (devices remapped by size/order).";
+    if (!window.confirm(msg+"?")) return;
+    if (!confirmInstalledSoft("Create Soft RAID array")) return;
+    runExec({
+      op:"create",
+      name: $("mdName").value.trim() || "md0",
+      level: $("mdLevel").value,
+      devices: paths,
+      metadata: $("mdMeta").value,
+      layout: $("mdLayout").value.trim(),
+      force: $("mdForce").checked
+    });
+  });
+  $("btnZero").addEventListener("click", function(){
+    var paths = Object.keys(selected);
+    if (!paths.length) return;
+    if (batchMode && !batchCompatible){
+      window.alert(batchBlockedReason || "Batch blocked");
+      return;
+    }
+    var msg = "Zero md superblock on:\n"+paths.join("\n");
+    if (batchMode) msg += "\n\nOn all "+IDS.length+" matching servers (remapped).";
+    if (!window.confirm(msg+"?")) return;
+    if (!confirmInstalledSoft("Zero Soft RAID superblock")) return;
+    (async function(){
+      for (var i=0;i<paths.length;i++){
+        await runExec({op:"zero-superblock", device:paths[i]});
+      }
+    })();
+  });
+
+  function mountHostPartitions(){
+    function tryMount(){
+      if (!window.CopperHostPartitions) return false;
+      var root = document.querySelector("[data-copper-host-parts]");
+      if (!root) return false;
+      var names = {};
+      META.forEach(function(m){ names[m.id] = m.name || String(m.id); });
+      CopperHostPartitions.mount({
+        root: root,
+        serverIds: IDS.slice(),
+        nameById: names,
+        isBusy: function(){ return busy; },
+        setBusy: setBusy,
+        log: function(msg){ log(msg); },
+        notify: function(msg, isError){ log((isError?"ERROR: ":"")+msg); },
+        showActivity: function(){},
+        setActivityStatus: function(text){ log(text); },
+        clearBanner: function(){},
+        confirm: function(title, body){
+          if (!window.confirm(title+"\n\n"+body)) return false;
+          return confirmInstalledSoft(title);
+        }
+      });
+      return true;
+    }
+    if (tryMount()) return;
+    var n = 0;
+    var t = setInterval(function(){
+      n++;
+      if (tryMount() || n > 80) clearInterval(t);
+    }, 50);
+  }
+
+  renderTabs();
+  loadCached();
+  mountHostPartitions();
+})();
+</script>
+{{end}}

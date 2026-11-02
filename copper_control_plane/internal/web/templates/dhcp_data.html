@@ -1,0 +1,253 @@
+{{define "content"}}
+<section class="row">
+  <div>
+    <h1>Data DHCP</h1>
+    <p class="muted">DHCPv4 for the <strong>data NIC</strong> runs in <code>copper_control_plane</code> (shared <code>copper_dhcp</code> library). This is where PXE clients learn <em>where</em> to boot from and <em>what</em> file to load. Needs root or <code>CAP_NET_BIND_SERVICE</code> for port 67.</p>
+  </div>
+</section>
+
+{{if .DHCPRunning}}
+<p class="flash">Data DHCP is <strong>running</strong> on this host.</p>
+{{else}}
+<p class="muted">Data DHCP is not running. Enable below and save to start the listener.</p>
+{{end}}
+
+<section class="leases-panel">
+  <div class="row result-head">
+    <div>
+      <h2>Leases on this host</h2>
+      <p class="muted">Every active MAC→IP binding from Data DHCP — <strong>no Probe/Inventory required</strong>. Sorted by MAC (stable). Refresh interval follows Settings → Agent watch (default 60s). For <span class="muted">unknown</span> rows: <strong>Resolve</strong> auto-matches via SSH, or <strong>Assign</strong> picks a baremetal manually. For a wrong match, use <strong>Unassign</strong>.</p>
+    </div>
+    <span class="muted activity-status" id="leases-status">connecting…</span>
+  </div>
+  <div class="leases-toolbar">
+    <label class="leases-filter">
+      <span class="muted">Filter</span>
+      <input type="search" id="leases-filter" placeholder="server, MAC, IP, NIC…" autocomplete="off">
+    </label>
+    <span class="muted cache-meta" id="leases-filter-meta"></span>
+  </div>
+  <div id="leases-table-wrap"
+       data-leases-url="/api/local/dhcp/leases"
+       data-poll-ms="{{.BatchRuntime.AgentWatchSeconds}}000">
+    {{if .Leases}}
+    <table id="leases-table">
+      <thead>
+        <tr>
+          <th>Server</th>
+          <th>Hardware</th>
+          <th>NIC</th>
+          <th>MAC</th>
+          <th>IP</th>
+          <th>Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="leases-tbody">
+        {{range .Leases}}
+        <tr data-search="{{.ServerName}} {{.Hardware}} {{.NIC}} {{.MAC}} {{.IP}}" data-mac="{{.MAC}}" data-ip="{{.IP}}"{{if .ServerID}} data-server-id="{{.ServerID}}"{{end}}>
+          <td>{{if and .ServerName .ServerID}}<button type="button" class="server-jump-btn" data-server-id="{{.ServerID}}" data-server-name="{{.ServerName}}" title="Open server pages" aria-haspopup="menu" aria-expanded="false">{{.ServerName}}</button>{{else if .ServerName}}{{.ServerName}}{{else}}<span class="muted">unknown</span>{{end}}</td>
+          <td>{{if .Hardware}}{{.Hardware}}{{else}}—{{end}}</td>
+          <td>{{if .NIC}}{{.NIC}}{{else}}—{{end}}</td>
+          <td><code>{{.MAC}}</code></td>
+          <td><code>{{.IP}}</code></td>
+          <td>{{if .ExpiresAt}}{{.ExpiresAt}}{{else}}—{{end}}</td>
+          <td class="lease-actions">
+            {{if .Reserved}}<span class="badge badge-bound">reserved</span>{{end}}
+            {{if not .ServerName}}
+            <span class="row-status lease-claim-spin" hidden aria-hidden="true">
+              <svg class="row-spinner" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <circle class="busy-track" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"/>
+                <circle class="busy-arc row-arc" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"
+                        stroke-linecap="round" stroke-dasharray="40 56"/>
+              </svg>
+            </span>
+            <button type="button" class="btn ghost btn-sm btn-claim-nics"
+                    data-ip="{{.IP}}" data-mac="{{.MAC}}"
+                    title="SSH this lease and attach NICs to the matching inventory server">Resolve</button>
+            <span class="row-msg muted lease-claim-msg" hidden></span>
+            {{else if .ServerID}}
+            <button type="button" class="btn ghost btn-sm btn-unassign-lease"
+                    data-ip="{{.IP}}" data-mac="{{.MAC}}" data-server-id="{{.ServerID}}"
+                    title="Remove this lease MAC from the baremetal (wrong match)">Unassign</button>
+            <span class="row-msg muted lease-claim-msg" hidden></span>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="muted" id="leases-empty">No active leases yet.</p>
+    <table id="leases-table" hidden>
+      <thead>
+        <tr>
+          <th>Server</th>
+          <th>Hardware</th>
+          <th>NIC</th>
+          <th>MAC</th>
+          <th>IP</th>
+          <th>Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="leases-tbody"></tbody>
+    </table>
+    {{end}}
+  </div>
+</section>
+
+<form method="post" action="/dhcp/data" class="stack dhcp-data-form">
+  <div class="stack narrow">
+  <label class="check"><input type="checkbox" name="enabled" value="1" {{if .DHCP.Enabled}}checked{{end}}> Serve DHCP with this config</label>
+
+  <label>Interface (NIC name, optional)
+    <input name="interface" value="{{.DHCP.Interface}}" placeholder="eth0">
+  </label>
+  <label>Listen
+    <input name="listen" value="{{.DHCP.Listen}}" placeholder="0.0.0.0:67">
+  </label>
+  <label>Server IP (DHCP identifier, option 54)
+    <input name="server_ip" value="{{.DHCP.ServerIP}}" required placeholder="10.0.0.2">
+  </label>
+  <label>Subnet (CIDR)
+    <input name="subnet" value="{{.DHCP.SubnetCIDR}}" required placeholder="10.0.0.0/24">
+  </label>
+  <label>Pool start
+    <input name="range_start" value="{{.DHCP.RangeStart}}" required placeholder="10.0.0.100">
+  </label>
+  <label>Pool end
+    <input name="range_end" value="{{.DHCP.RangeEnd}}" required placeholder="10.0.0.200">
+  </label>
+  <label>Gateway
+    <input name="gateway" value="{{.DHCP.Gateway}}" placeholder="10.0.0.1">
+  </label>
+  <label>DNS (comma-separated)
+    <input name="dns" value="{{.DNSJoined}}" placeholder="1.1.1.1, 8.8.8.8">
+  </label>
+  <label>Lease time
+    <input name="lease_time" value="{{.DHCP.LeaseTime}}" placeholder="1h">
+  </label>
+
+  <fieldset class="mac-pick">
+    <legend>PXE boot (next-server + boot file)</legend>
+    <p class="muted">Two halves of the same instruction to a PXE client: <strong>next-server</strong> is where to go; <strong>boot file</strong> is what to download from there.</p>
+    <label>Next-server (siaddr / option 66)
+      <input name="next_server" value="{{.DHCP.NextServer}}" placeholder="10.0.0.5 — TFTP/HTTP host; empty → server IP">
+    </label>
+    <p class="muted cache-meta">IP of the machine holding boot files (often a TFTP server). Does not have to be this DHCP host. Sent as DHCP siaddr and option 66 so picky firmware still finds it. If unset, many clients fall back to the DHCP server IP.</p>
+    <label>Boot file (option 67 / filename)
+      <input name="boot_file" value="{{.DHCP.BootFile}}" placeholder="ipxe.efi or http://10.0.0.5/boot.ipxe">
+    </label>
+    <p class="muted cache-meta">Path or name the client downloads — e.g. <code>pxelinux.0</code>, <code>undionly.kpxe</code>, <code>ipxe.efi</code>, or an HTTP URL for iPXE/UEFI HTTP Boot. With a URL, the client takes the host from the URL; next-server still matters for the first-stage TFTP load.</p>
+  </fieldset>
+
+  <label class="check"><input type="checkbox" name="allow_all" value="1" {{if .DHCP.AllowAll}}checked{{end}}> Allow all MACs (ignore allow list)</label>
+  </div>
+
+  <fieldset class="mac-pick host-nic-pick">
+    <legend>Host NICs from inventory → allow + reserved IP</legend>
+    <p class="muted">Inventory NICs for allow/reserve. Live leases without inventory appear under <strong>Leases without inventory</strong> (and in the table above). Collapsed by default; bound servers open at the top.</p>
+    {{if .HostServers}}
+    <div class="host-nic-toolbar">
+      <label class="host-nic-filter">
+        <span class="muted">Filter</span>
+        <input type="search" id="host-nic-filter" placeholder="server, MAC, or IP…" autocomplete="off">
+      </label>
+      <div class="host-nic-filter-modes" role="group" aria-label="Filter mode">
+        <button type="button" class="host-filter-mode is-active" data-mode="all">All</button>
+        <button type="button" class="host-filter-mode" data-mode="bound">Bound ({{.HostBoundCount}})</button>
+      </div>
+      <label class="check mac-select-all">
+        <input type="checkbox" class="mac-select-all-toggle" data-mac-group="allow_mac_known">
+        <span>Select all</span>
+      </label>
+      <p class="muted cache-meta host-nic-meta">{{len .HostServers}} groups · {{.HostNICCount}} NICs{{if .HostBoundCount}} · {{.HostBoundCount}} with lease{{end}}</p>
+    </div>
+    <div class="host-server-list" id="host-server-list">
+      {{range .HostServers}}
+      <details class="host-server{{if .HasLease}} has-lease{{end}}"
+               {{if .Open}}open{{end}}
+               data-name="{{.Name}}"
+               {{if .ID}}data-server-id="{{.ID}}"{{end}}
+               data-hardware="{{.Hardware}}"
+               data-search="{{.Name}} {{.Hardware}} {{.LeaseSummary}}{{range .NICs}} {{.MAC}} {{.NIC}} {{.LeaseIP}} {{.ReserveIP}}{{end}}"
+               data-has-lease="{{if .HasLease}}1{{else}}0{{end}}">
+        <summary class="host-server-summary">
+          <span class="host-server-title">
+            {{if .ID}}<button type="button" class="server-jump-btn" data-server-id="{{.ID}}" data-server-name="{{.Name}}" title="Open server pages" aria-haspopup="menu" aria-expanded="false">{{.Name}}</button>{{else}}<strong>{{.Name}}</strong>{{end}}
+            {{if .Hardware}}<span class="muted cache-meta">{{.Hardware}}</span>{{end}}
+          </span>
+          <span class="host-server-meta">
+            {{if .HasLease}}
+            <span class="badge badge-bound">leased {{.LeaseSummary}}</span>
+            {{end}}
+            <span class="muted">{{.NICCount}} NIC{{if ne .NICCount 1}}s{{end}}{{if .AllowedCount}} · {{.AllowedCount}} allowed{{end}}</span>
+          </span>
+        </summary>
+        <div class="host-server-body">
+          <label class="check mac-select-server">
+            <input type="checkbox" class="mac-select-server-toggle" data-mac-group="allow_mac_known">
+            <span>Select all NICs on this server</span>
+          </label>
+          <div class="mac-list mac-list-data">
+            {{range .NICs}}
+            <div class="mac-row{{if .HasLease}} is-leased{{end}}">
+              <label class="check">
+                <input type="checkbox" name="allow_mac_known" value="{{.MAC}}" {{if .Selected}}checked{{end}}>
+                <span>
+                  {{if .NIC}}<span class="nic-name">{{.NIC}}</span> · {{end}}<code>{{.MAC}}</code>
+                  {{if .HasLease}}<span class="badge badge-bound">leased {{.LeaseIP}}</span>{{end}}
+                </span>
+              </label>
+              <label class="reserve-ip">
+                <span class="muted">Reserve IP</span>
+                <input type="hidden" name="reserve_mac" value="{{.MAC}}">
+                <input name="reserve_ip" value="{{.ReserveIP}}" placeholder="{{if .LeaseIP}}{{.LeaseIP}}{{else}}optional{{end}}" autocomplete="off">
+              </label>
+            </div>
+            {{end}}
+          </div>
+        </div>
+      </details>
+      {{end}}
+      <p class="muted host-nic-empty" id="host-nic-empty" hidden>No servers match this filter.</p>
+    </div>
+    {{else}}
+    <p class="muted">No inventory NICs and no live leases yet. Probe + Inventory fills named servers; leases still show in the table above as soon as DHCP ACKs.</p>
+    {{end}}
+  </fieldset>
+
+  <div class="stack narrow">
+  <label>Additional allow MACs (not in inventory, one per line)
+    <textarea name="allow_macs_extra" rows="3" placeholder="aa:bb:cc:dd:ee:01">{{.AllowMACsText}}</textarea>
+  </label>
+  <label>Deny MACs (one per line)
+    <textarea name="deny_macs" rows="3">{{.DenyMACsText}}</textarea>
+  </label>
+  <label>Additional reservations (mac,ip per line — not in inventory list)
+    <textarea name="reservations" rows="3" placeholder="aa:bb:cc:dd:ee:99,10.0.0.50">{{.ReservationsText}}</textarea>
+  </label>
+
+  <div class="actions">
+    <button type="submit">Save &amp; apply</button>
+    <button type="submit" formaction="/dhcp/data/apply" formmethod="post">Apply saved config only</button>
+  </div>
+  </div>
+</form>
+
+<section class="activity-panel" style="margin-top:2rem">
+  <div class="row result-head">
+    <div>
+      <h2>DHCP activity on this host</h2>
+      <p class="muted cache-meta">Live from copper_control_plane — offers, ACKs, filters, config apply.</p>
+    </div>
+    <span class="muted activity-status" id="activity-status">connecting…</span>
+  </div>
+  <pre class="activity-console" id="activity-console"
+       data-activity-url="/api/local/activity"
+       data-component="dhcp"
+       data-poll-ms="2000"
+       aria-live="polite"></pre>
+</section>
+{{end}}

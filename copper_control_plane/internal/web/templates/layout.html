@@ -1,0 +1,145 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b4f9c">
+  <title>{{.Title}} · copper control plane</title>
+  <link rel="stylesheet" href="/static/app.css?v={{.StaticVersion}}">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="{{if .Authed}}/{{else}}/login{{end}}"{{if .Authed}} data-copper-nav{{end}}>copper</a>
+    <nav>
+      {{if .Authed}}
+      <a href="/" data-copper-nav>Servers</a>
+      <a href="/servers/import" data-copper-nav>Import CSV</a>
+      <a href="/servers/new" data-copper-nav>Add server</a>
+      <a href="/softraid" data-copper-nav>Soft RAID</a>
+      <a href="/dhcp/oob" data-copper-nav>OOB DHCP</a>
+      <a href="/dhcp/data" data-copper-nav>Data DHCP</a>
+      <a href="/jobs" data-copper-nav>Jobs</a>
+      <a href="/activity" data-copper-nav>Activity</a>
+      <a href="/settings" data-copper-nav>Settings</a>
+      <a href="/logout">Logout</a>
+      {{end}}
+    </nav>
+  </header>
+  {{if .Authed}}
+  {{/* Stub job poller before page scripts: Storage/Deploy inline JS runs before deferred dispatcher.js.
+       dispatcher.js replaces window.CopperJobs with the full tracker when it loads.
+       Not loaded on /login — unauthenticated pages must not poll /api/jobs. */}}
+  <script>
+  (function () {
+    if (window.CopperJobs && window.CopperJobs.pollUntilDone && window.CopperJobs.subscribe) return;
+    function sleep(ms) {
+      return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+    function parseResult(job) {
+      var result = job && job.result;
+      if (typeof result === "string") {
+        try { result = JSON.parse(result); } catch (_e) {}
+      }
+      return result && typeof result === "object" ? result : {};
+    }
+    function readJSON(resp) {
+      return resp.text().then(function (text) {
+        var trimmed = (text || "").trim();
+        if (!trimmed) throw new Error("empty response");
+        if (trimmed.charAt(0) === "<") {
+          throw new Error(
+            resp.redirected || /login/i.test(resp.url)
+              ? "session expired — reload and log in"
+              : "server returned HTML instead of JSON (HTTP " + resp.status + ")"
+          );
+        }
+        try { return JSON.parse(trimmed); }
+        catch (_e) { throw new Error("invalid JSON from " + resp.url); }
+      });
+    }
+    window.CopperJobs = {
+      track: function () {},
+      trackMany: function () {},
+      remember: function () {},
+      parseResult: parseResult,
+      list: function () { return Promise.resolve([]); },
+      listSorted: function () { return []; },
+      getBusy: function () { return null; },
+      isServerBusy: function () { return false; },
+      busyMap: function () { return {}; },
+      subscribe: function () { return function () {}; },
+      start: function () {},
+      hydrate: function () { return Promise.resolve({}); },
+      run: function () { return Promise.reject(new Error("dispatcher loading")); },
+      on: function () {},
+      knownIds: function () { return []; },
+      get: function () { return null; },
+      pollUntilDone: function (jobId, timeoutMs, onUpdate) {
+        var deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 600000);
+        return (async function () {
+          for (;;) {
+            var resp = await fetch("/api/jobs/" + encodeURIComponent(jobId), {
+              credentials: "same-origin",
+              headers: { Accept: "application/json" },
+            });
+            var data = await readJSON(resp);
+            if (!resp.ok) throw new Error((data && data.error) || "job poll failed");
+            var job = data.job || {};
+            if (typeof onUpdate === "function") onUpdate(job);
+            if (job.status === "ok") return job;
+            if (job.status === "error" || job.status === "cancelled") {
+              throw new Error(job.error || "job " + job.status);
+            }
+            if (Date.now() > deadline) {
+              throw new Error("job timed out after " + Math.round(timeoutMs / 1000) + "s");
+            }
+            await sleep(1000);
+          }
+        })();
+      },
+    };
+  })();
+  </script>
+  <div id="server-busy-bar" class="server-busy-bar" hidden aria-live="polite"></div>
+  <div id="copper-session-note" class="copper-session-note" hidden aria-live="polite"></div>
+  {{end}}
+  <main id="app-main">
+    {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    {{template "content" .}}
+  </main>
+  {{if .Authed}}
+  <aside id="jobs-dock" class="jobs-dock" aria-live="polite">
+    <button type="button" class="jobs-dock-toggle" id="jobs-dock-toggle" title="Job queue">
+      <span class="jobs-dock-label">Jobs</span>
+      <span class="jobs-dock-count" id="jobs-dock-count" hidden>0</span>
+    </button>
+    <div class="jobs-dock-panel" id="jobs-dock-panel" hidden>
+      <div class="jobs-dock-head">
+        <strong>Job queue</strong>
+        <div class="jobs-dock-actions">
+          <a class="btn ghost" href="/jobs" data-copper-nav>Open</a>
+          <button type="button" class="btn ghost" id="jobs-dock-minimize">Hide</button>
+        </div>
+      </div>
+      <p class="muted jobs-dock-status" id="jobs-dock-status">idle</p>
+      <div class="jobs-dock-list" id="jobs-dock-list"></div>
+    </div>
+  </aside>
+  <div id="busy-overlay" class="busy-overlay" hidden aria-live="polite" aria-busy="true">
+    <div class="busy-card">
+      <svg class="busy-spinner" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+        <circle class="busy-track" cx="24" cy="24" r="20" fill="none" stroke-width="4"/>
+        <circle class="busy-arc" cx="24" cy="24" r="20" fill="none" stroke-width="4"
+                stroke-linecap="round" stroke-dasharray="80 126"/>
+      </svg>
+      <p class="busy-label">Working…</p>
+    </div>
+  </div>
+  <script src="/static/dispatcher.js?v={{.StaticVersion}}" defer></script>
+  <script src="/static/app.js?v={{.StaticVersion}}" defer></script>
+  {{end}}
+</body>
+</html>
+{{end}}

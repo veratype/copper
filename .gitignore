@@ -1,0 +1,26 @@
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Build outputs
+*.exe
+*.test
+*.out
+/copper_bmc/bin/
+/copper_control_plane/bin/
+/copper_bmc/copper_bmc
+/copper_bmc/copper_bmc.exe
+/copper_control_plane/copper_control_plane
+/copper_control_plane/copper_control_plane.oss
+/copper_control_plane/copper_cp.exe
+/copper_control_plane/copper_license
+/tmp/
+
+# Runtime data
+*.db
+**/data/
+
+# License issuer private material (never publish)
+/keys/
+**/ed25519.private

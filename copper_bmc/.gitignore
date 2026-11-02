@@ -1,0 +1,22 @@
+# Binaries
+/bin/
+/dist/
+
+# Runtime (persisted OOB DHCP leases, etc.)
+/data/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / coverage
+*.test
+*.out
+coverage.html
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

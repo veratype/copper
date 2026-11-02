@@ -1,0 +1,1420 @@
+{{define "content"}}
+<section id="deploy-page" class="wide">
+  <script type="application/json" id="page-server-ids-json">{{.ServerIDs}}</script>
+  <p id="copper-page-busy" class="flash" hidden></p>
+  <div class="row">
+    <div>
+      <h1>Deploy OS</h1>
+      <p class="muted" id="targetsLine">Loading…</p>
+    </div>
+    <div class="actions">
+      <a class="btn ghost" href="/">Servers</a>
+      <a class="btn ghost" id="linkStorage" href="#">Storage</a>
+      <a class="btn ghost" id="linkSoftRaid" href="#">Soft RAID</a>
+    </div>
+  </div>
+
+  {{if .MediaError}}<p class="error">Data media: {{.MediaError}}</p>{{end}}
+  {{if .MediaNote}}<p class="flash">{{.MediaNote}}</p>{{end}}
+  <p class="error" id="installedCaution" hidden></p>
+
+  <div class="panel stack">
+    <h2>1. Cloud image</h2>
+    <p class="muted">Files from the control-plane data media folder{{if .MediaBaseURL}} (<code>{{.MediaBaseURL}}</code>){{end}}. Ubuntu cloud images only for now.</p>
+    <label>Image file
+      <select id="imagePath">
+        <option value="">— select —</option>
+        {{range .MediaFiles}}
+        <option value="{{.Path}}" data-url="{{.URL}}">{{.Path}} ({{.SizeHuman}})</option>
+        {{end}}
+      </select>
+    </label>
+    <label>Or image URL (override)
+      <input id="imageURL" type="url" placeholder="http://…/ubuntu-xx.xx-server-cloudimg-amd64.img" spellcheck="false">
+    </label>
+  </div>
+
+  <div class="panel stack">
+    <h2>2. Target disk + BMC boot</h2>
+    <p class="muted">Pick a <strong>layout role</strong> (e.g. Array A · LD 1), not a shared letter. Each host’s live <code>/dev/sdX</code> for that role is resolved by WWN / Unique ID and shown below — letters often differ across servers.</p>
+    <div id="layoutInfo" class="muted">Loading layout…</div>
+    <label id="targetDiskLabel"><span id="targetDiskLabelText">Install target</span>
+      <select id="targetDisk"></select>
+    </label>
+    <div id="targetMapPanel" class="target-map" hidden>
+      <div id="targetMapSummary" class="target-map-summary muted"></div>
+      <div class="table-wrap target-map-wrap">
+        <table class="prov-status" id="targetMapTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Server</th>
+              <th>This host’s device</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="targetMapBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="muted" id="bootOrderHint">Select a target to see boot plan.</p>
+    <label class="check"><input type="checkbox" id="optBootHDD" checked> After write: clear BMC boot override (<b>Disabled</b>) so <code>efibootmgr</code> BootOrder wins</label>
+    <p class="muted">Second-hand servers often still have an old OS on another drive. Redfish <code>Hdd</code> alone cannot pick one RAID volume over that old disk — and <code>Hdd Continuous</code> actively fights BootOrder on multi-disk HPE boxes. After imaging, Copper runs <code>efibootmgr</code> on the live OS to create a UEFI entry on <strong>this</strong> disk’s ESP and put it <strong>first</strong> in BootOrder, then clears the BMC override. Needs <code>efibootmgr</code> on the live image.</p>
+    <div class="actions layout-actions">
+      <button type="button" class="btn ghost" id="btnReloadLayout">Reload layout from Storage</button>
+      <button type="button" class="btn ghost" id="btnPinDirect">Pin direct disks (no RAID)</button>
+      <button type="button" class="btn ghost" id="btnRefreshDisks">Refresh live disks</button>
+      <span id="layoutBusy" class="layout-busy" hidden aria-live="polite">
+        <svg class="layout-spinner" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" opacity="0.25"/>
+          <circle class="layout-arc" cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-dasharray="40 60"/>
+        </svg>
+        <span id="layoutBusyText">Working…</span>
+      </span>
+    </div>
+  </div>
+
+  <div class="panel stack">
+    <h2>3. cloud-init (cidata)</h2>
+    <p class="muted">Written into the installed root filesystem as NoCloud seed plus a netplan drop-in. Batch mode expands hostname/address patterns per host and resolves each host’s MAC (never reuse one NIC’s MAC for the whole batch). Per-server <code>provisioned_*</code> inventory fields win over these form values when set.</p>
+    <ul class="muted cidata-paths">
+      <li><code>/var/lib/cloud/seed/nocloud/user-data</code> — users / hostname</li>
+      <li><code>/var/lib/cloud/seed/nocloud/meta-data</code> — instance-id</li>
+      <li><code>/var/lib/cloud/seed/nocloud/network-config</code> — netplan v2 (cloud-init NoCloud)</li>
+      <li><code>/etc/netplan/99-copper.yaml</code> — same network config (hard fallback; overrides stock cloud-init netplan)</li>
+    </ul>
+    <pre id="netPreview" class="console net-preview" aria-live="polite">network-config preview…</pre>
+    <label>Username
+      <input id="ciUser" type="text" autocomplete="username" placeholder="ubuntu" value="ubuntu">
+    </label>
+    <label>Password
+      <input id="ciPass" type="password" autocomplete="new-password">
+    </label>
+    <label id="ciHostLabel">Hostname
+      <input id="ciHost" type="text" placeholder="optional" spellcheck="false">
+    </label>
+    <p class="muted" id="ciHostHint" hidden>Patterns: <code>{name}</code> inventory name · <code>{n}</code> / <code>{nn}</code> index · <code>{n+10}</code> offset. Example: <code>node-{nn}</code></p>
+    <label>Network mode
+      <select id="netMode">
+        <option value="dhcp">DHCP</option>
+        <option value="static">Static IP</option>
+      </select>
+    </label>
+    <fieldset class="nic-select">
+      <legend>NIC selection</legend>
+      <label class="check"><input type="radio" name="nicSelect" value="by_name" checked> Same interface name on every host (MAC looked up per host)</label>
+      <label class="check"><input type="radio" name="nicSelect" value="data_nic"> Each host’s Data DHCP NIC (MAC from lease / inventory)</label>
+    </fieldset>
+    <label id="netIfaceLabel">Interface
+      <select id="netIface"></select>
+    </label>
+    <p class="muted" id="netIfaceHint" hidden></p>
+    <div id="staticFields" class="stack" hidden>
+      <label id="netCIDRLabel">Address (CIDR)
+        <input id="netCIDR" type="text" placeholder="10.0.0.20/24" spellcheck="false">
+      </label>
+      <p class="muted" id="netCIDRHint" hidden>Batch needs an index pattern, e.g. <code>10.0.0.{n+10}/24</code> → first host <code>10.0.0.11/24</code>.</p>
+      <label>Gateway
+        <input id="netGW" type="text" placeholder="10.0.0.1" spellcheck="false">
+      </label>
+      <label>DNS (comma-separated)
+        <input id="netDNS" type="text" placeholder="1.1.1.1,8.8.8.8" spellcheck="false">
+      </label>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="btnRefreshNICs">Refresh NICs</button>
+    </div>
+    <div class="table-wrap" id="cidataPreviewWrap">
+      <table class="prov-status" id="cidataPreview">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Server</th>
+            <th>Hostname</th>
+            <th>Interface</th>
+            <th>MAC</th>
+            <th>Address</th>
+          </tr>
+        </thead>
+        <tbody id="cidataPreviewBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel stack">
+    <h2>4. Provision</h2>
+    <label class="check"><input type="checkbox" id="optReboot"> After write: reboot (ForceRestart)</label>
+    <p class="muted" id="batchSummary">Ready.</p>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="btnPreflight" disabled>Preflight all</button>
+      <button type="button" class="btn" id="btnProvision" disabled>Start provision</button>
+      <button type="button" class="btn ghost" id="btnRetryFailed" disabled>Retry failed</button>
+    </div>
+    <div class="table-wrap">
+      <table class="prov-status" id="provTable">
+        <thead>
+          <tr>
+            <th>Server</th>
+            <th>Phase</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Last line</th>
+          </tr>
+        </thead>
+        <tbody id="provBody"></tbody>
+      </table>
+    </div>
+    <pre id="provLog" class="console" aria-live="polite"></pre>
+  </div>
+</section>
+<script>
+(function(){
+  var SERVER_IDS = {{.ServerIDs}};
+  var META = {{.StorageMeta}};
+  var batchMode = SERVER_IDS.length > 1;
+  var nameById = {};
+  META.forEach(function(m){ nameById[m.id] = m.name; });
+  var rowState = {};
+  var lastBody = null;
+  var busy = false;
+  var nicsByServer = {}; // id -> [{name,mac,addresses}]
+  var layoutsById = {}; // id -> layout (targets with key/device)
+  var targetMapExpanded = false;
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ var d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
+  function log(line, cls){
+    var el=$("provLog");
+    var div=document.createElement("div");
+    if(cls) div.className=cls;
+    div.textContent=line;
+    el.appendChild(div);
+    el.scrollTop=el.scrollHeight;
+  }
+
+  function nicSelectMode(){
+    var el = document.querySelector('input[name="nicSelect"]:checked');
+    return el ? el.value : "by_name";
+  }
+
+  function selectedNIC(){
+    var sel=$("netIface");
+    var opt = sel.options[sel.selectedIndex];
+    if(!opt || !opt.value) return {name:"", mac:""};
+    return {name: opt.value, mac: (opt.getAttribute("data-mac")||"").trim()};
+  }
+
+  function expandPattern(pat, name, index){
+    pat = String(pat == null ? "" : pat).trim();
+    if(!pat) return name || "";
+    return pat.replace(/\{(name|n{1,3}(?:\+\d+)?)\}/g, function(_, token){
+      if(token === "name") return name || "";
+      var base = token, offset = 0;
+      var plus = token.indexOf("+");
+      if(plus >= 0){
+        base = token.slice(0, plus);
+        offset = parseInt(token.slice(plus+1), 10) || 0;
+      }
+      var v = index + offset;
+      if(base.length === 1) return String(v);
+      var s = String(v);
+      while(s.length < base.length) s = "0" + s;
+      return s;
+    });
+  }
+
+  function metaForIndex(index){
+    return META[index - 1] || null;
+  }
+
+  function previewHostname(index, name){
+    var m = metaForIndex(index);
+    if(m && (m.provisioned_hostname||"").trim()) return m.provisioned_hostname.trim();
+    var pat = $("ciHost").value.trim();
+    if(!pat) pat = batchMode ? "{name}" : name;
+    return expandPattern(pat, name, index);
+  }
+
+  function previewAddress(index){
+    var m = metaForIndex(index);
+    if(m && (m.provisioned_ip_cidr||"").trim()) return m.provisioned_ip_cidr.trim();
+    if($("netMode").value !== "static") return "";
+    var pat = $("netCIDR").value.trim();
+    if(!pat) return "";
+    return expandPattern(pat, "", index);
+  }
+
+  function macForHost(id, ifaceName){
+    var list = nicsByServer[id] || [];
+    for(var i=0;i<list.length;i++){
+      if(list[i].name === ifaceName) return list[i].mac || "";
+    }
+    return "";
+  }
+
+  function updateCidataPreview(){
+    var body = $("cidataPreviewBody");
+    if(!body) return;
+    var mode = nicSelectMode();
+    var iface = selectedNIC().name;
+    var html = "";
+    SERVER_IDS.forEach(function(id, i){
+      var name = nameById[id] || String(id);
+      var idx = i + 1;
+      var host = previewHostname(idx, name);
+      var addr = previewAddress(idx);
+      var ifn = mode === "data_nic" ? "(data NIC)" : (iface || "—");
+      var mac = mode === "data_nic" ? "(per host)" : (macForHost(id, iface) || (batchMode ? "(lookup)" : selectedNIC().mac) || "—");
+      html += "<tr>"+
+        "<td>"+idx+"</td>"+
+        "<td>"+esc(name)+"</td>"+
+        "<td><code>"+esc(host)+"</code></td>"+
+        "<td>"+esc(ifn)+"</td>"+
+        "<td><code>"+esc(mac)+"</code></td>"+
+        "<td>"+(addr ? "<code>"+esc(addr)+"</code>" : "DHCP")+"</td>"+
+        "</tr>";
+    });
+    body.innerHTML = html;
+  }
+
+  function prefillsFromProvisioned(){
+    if(batchMode || !META.length) return;
+    var m = META[0];
+    if((m.provisioned_hostname||"").trim() && !$("ciHost").value.trim()){
+      $("ciHost").value = m.provisioned_hostname.trim();
+    }
+    if((m.provisioned_ip_cidr||"").trim()){
+      $("netMode").value = "static";
+      $("staticFields").hidden = false;
+      if(!$("netCIDR").value.trim()) $("netCIDR").value = m.provisioned_ip_cidr.trim();
+    }
+    if((m.provisioned_gw||"").trim() && !$("netGW").value.trim()){
+      $("netGW").value = m.provisioned_gw.trim();
+    }
+    if((m.provisioned_dns||"").trim() && !$("netDNS").value.trim()){
+      $("netDNS").value = m.provisioned_dns.trim();
+    }
+  }
+
+  function syncBatchFormHints(){
+    var hostLabel = $("ciHostLabel");
+    if(batchMode){
+      hostLabel.childNodes[0].textContent = "Hostname pattern ";
+      $("ciHost").placeholder = "{name}";
+      if(!$("ciHost").value.trim()) $("ciHost").value = "{name}";
+      $("ciHostHint").hidden = false;
+      $("netCIDR").placeholder = "10.0.0.{n+10}/24";
+      $("netCIDRHint").hidden = false;
+      $("netCIDRLabel").childNodes[0].textContent = "Address pattern (CIDR) ";
+    } else {
+      hostLabel.childNodes[0].textContent = "Hostname ";
+      $("ciHost").placeholder = "optional";
+      $("ciHostHint").hidden = true;
+      $("netCIDR").placeholder = "10.0.0.20/24";
+      $("netCIDRHint").hidden = true;
+      $("netCIDRLabel").childNodes[0].textContent = "Address (CIDR) ";
+      prefillsFromProvisioned();
+    }
+    var dataMode = nicSelectMode() === "data_nic";
+    $("netIfaceLabel").hidden = dataMode;
+    $("netIfaceHint").hidden = !dataMode;
+    if(dataMode){
+      $("netIfaceHint").textContent = "Each host uses the NIC tied to its Data DHCP lease; MAC is resolved server-side.";
+    }
+    updateCidataPreview();
+    updateNetPreview();
+    updateProvisionEnabled();
+  }
+
+  function selectedTargetOpt(){
+    var sel = $("targetDisk");
+    return sel.options[sel.selectedIndex] || null;
+  }
+
+  function targetRoleLabel(opt){
+    if(!opt) return "";
+    return (opt.getAttribute("data-role") || opt.textContent || "").trim();
+  }
+
+  function targetKeyOf(opt){
+    if(!opt) return "";
+    return (opt.getAttribute("data-key") || "").trim();
+  }
+
+  function matchHostTarget(lay, key, fallbackDevice, primaryIndex){
+    var targets = (lay && lay.targets) || [];
+    var i;
+    if(key){
+      for(i=0;i<targets.length;i++){
+        if((targets[i].key || "") === key) return targets[i];
+      }
+    }
+    if(primaryIndex != null && primaryIndex >= 0 && primaryIndex < targets.length){
+      return targets[primaryIndex];
+    }
+    if(fallbackDevice){
+      for(i=0;i<targets.length;i++){
+        if((targets[i].device || "") === fallbackDevice) return targets[i];
+      }
+    }
+    return null;
+  }
+
+  function roleLabelFromTarget(t){
+    if(!t) return "";
+    var lab = String(t.label || "");
+    // Drop trailing " · /dev/…" so the role reads the same across hosts.
+    return lab.replace(/\s·\s\/dev\/\S+\s*$/, "").replace(/\s·\s\(no \/dev yet[^)]*\)\s*$/, "") || lab;
+  }
+
+  function updateTargetMap(){
+    var panel = $("targetMapPanel");
+    var summary = $("targetMapSummary");
+    var body = $("targetMapBody");
+    if(!panel || !summary || !body) return;
+    var opt = selectedTargetOpt();
+    var disk = $("targetDisk").value;
+    if(!batchMode){
+      panel.hidden = true;
+      return;
+    }
+    if(!disk && !targetKeyOf(opt)){
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    var key = targetKeyOf(opt);
+    var role = targetRoleLabel(opt) || disk;
+    var primaryTargets = (layoutsById[SERVER_IDS[0]] && layoutsById[SERVER_IDS[0]].targets) || [];
+    var primaryIndex = -1;
+    if(key){
+      for(var pi=0; pi<primaryTargets.length; pi++){
+        if((primaryTargets[pi].key || "") === key){ primaryIndex = pi; break; }
+      }
+    }
+    if(primaryIndex < 0 && disk){
+      for(var pj=0; pj<primaryTargets.length; pj++){
+        if((primaryTargets[pj].device || "") === disk){ primaryIndex = pj; break; }
+      }
+    }
+    var rows = [];
+    var pathCount = {};
+    var missing = 0;
+    SERVER_IDS.forEach(function(id, idx){
+      var lay = layoutsById[id];
+      var t = matchHostTarget(lay, key, disk, primaryIndex);
+      var path = t && t.device ? t.device : "";
+      var ok = !!path;
+      if(!ok) missing++;
+      else pathCount[path] = (pathCount[path] || 0) + 1;
+      rows.push({
+        idx: idx + 1,
+        id: id,
+        name: nameById[id] || String(id),
+        path: path,
+        ok: ok
+      });
+    });
+    var pathParts = Object.keys(pathCount).sort().map(function(p){
+      return "<code>"+esc(p)+"</code>×"+pathCount[p];
+    });
+    var distinct = Object.keys(pathCount).length;
+    var head = "<b>"+SERVER_IDS.length+"</b> hosts · role <b>"+esc(role)+"</b>";
+    if(distinct === 0){
+      head += ' · <span class="error">no host has a resolved /dev yet — Reload layout</span>';
+    } else if(distinct === 1){
+      head += " · same letter on all resolved hosts: "+pathParts.join("");
+    } else {
+      head += " · <b>"+distinct+"</b> different /dev letters: "+pathParts.join(" · ");
+    }
+    if(missing) head += ' · <span class="error">'+missing+" missing</span>";
+    var showAll = targetMapExpanded || SERVER_IDS.length <= 12;
+    var toggle = "";
+    if(SERVER_IDS.length > 12){
+      toggle = ' <button type="button" class="btn ghost btn-tiny" id="btnToggleTargetMap">'+(showAll?"Hide host list":"Show all "+SERVER_IDS.length+" hosts")+"</button>";
+    }
+    summary.innerHTML = head + toggle;
+    var btn = $("btnToggleTargetMap");
+    if(btn){
+      btn.onclick = function(){
+        targetMapExpanded = !targetMapExpanded;
+        updateTargetMap();
+      };
+    }
+    var wrap = panel.querySelector(".target-map-wrap");
+    if(wrap) wrap.hidden = !showAll;
+    if(!showAll){
+      body.innerHTML = "";
+      return;
+    }
+    body.innerHTML = rows.map(function(r){
+      return "<tr>"+
+        "<td>"+r.idx+"</td>"+
+        "<td>"+esc(r.name)+"</td>"+
+        "<td>"+(r.path ? "<code>"+esc(r.path)+"</code>" : "<span class=\"error\">— unresolved</span>")+"</td>"+
+        "<td>"+(r.ok ? '<span class="pill st-ok">ready</span>' : '<span class="pill st-error">missing</span>')+"</td>"+
+        "</tr>";
+    }).join("");
+  }
+
+  function updateBootHint(){
+    var disk = $("targetDisk").value;
+    var el = $("bootOrderHint");
+    var opt = selectedTargetOpt();
+    if(!disk){
+      el.innerHTML = "Select a target to see BMC boot order plan.";
+      updateTargetMap();
+      return;
+    }
+    if(batchMode){
+      var role = targetRoleLabel(opt) || disk;
+      el.innerHTML = "Batch writes the <b>same role</b> (<code>"+esc(role)+"</code>) on every host — see the per-host <code>/dev</code> map above. On each host, <b>efibootmgr</b> pins that disk’s ESP as BootOrder #1; BMC override is cleared so firmware follows that order.";
+    } else {
+      el.innerHTML = "Written disk <code>"+esc(disk)+"</code>: <b>efibootmgr</b> will register its ESP as BootOrder #1 (beats old OS on other drives). BMC override is cleared so firmware follows that order.";
+    }
+    updateTargetMap();
+  }
+
+  function pinnedGW(index){
+    var m = metaForIndex(index);
+    return m && (m.provisioned_gw||"").trim() ? m.provisioned_gw.trim() : "";
+  }
+  function pinnedDNS(index){
+    var m = metaForIndex(index);
+    if(!m || !(m.provisioned_dns||"").trim()) return [];
+    return m.provisioned_dns.split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+  }
+
+  function updateNetPreview(){
+    var nic = selectedNIC();
+    var mode = $("netMode").value;
+    var ns = nicSelectMode();
+    var firstName = nameById[SERVER_IDS[0]] || "host";
+    var iface = ns === "data_nic" ? "data-nic" : (nic.name || "id0");
+    var mac = ns === "data_nic" ? "per-host" : (macForHost(SERVER_IDS[0], nic.name) || nic.mac || "…");
+    var lines = ["# preview for "+firstName+" (index 1)"+(batchMode?" · patterns expand per host":""), "version: 2", "ethernets:"];
+    lines.push("  "+iface+":");
+    lines.push("    match:");
+    lines.push("      macaddress: \""+mac+"\"");
+    if(ns !== "data_nic" && nic.name) lines.push("    set-name: "+nic.name);
+    var addr = previewAddress(1);
+    var useStatic = mode === "static" || !!addr;
+    if(useStatic){
+      lines.push("    dhcp4: false");
+      var cidr = addr || $("netCIDR").value.trim() || "…/24";
+      lines.push("    addresses:");
+      lines.push("      - "+cidr);
+      var gw = pinnedGW(1) || $("netGW").value.trim();
+      if(gw){
+        lines.push("    routes:");
+        lines.push("      - to: default");
+        lines.push("        via: "+gw);
+      }
+      var dns = pinnedDNS(1);
+      if(!dns.length){
+        dns = ($("netDNS").value||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean);
+      }
+      if(dns.length){
+        lines.push("    nameservers:");
+        lines.push("      addresses:");
+        dns.forEach(function(d){ lines.push("        - "+d); });
+      }
+    } else {
+      lines.push("    dhcp4: true");
+    }
+    $("netPreview").textContent = lines.join("\n");
+    updateCidataPreview();
+  }
+
+  function targetsLine(){
+    var parts = META.map(function(m){
+      return m.name + (m.mode ? " ("+m.mode+")" : "") + (m.data_ip ? " @"+m.data_ip : "");
+    });
+    var ok = META.every(function(m){ return m.ok && (m.batch_fingerprint || m.fingerprint); });
+    var same = true;
+    if(batchMode && META.length){
+      var fp = META[0].batch_fingerprint || META[0].fingerprint;
+      same = META.every(function(m){ return (m.batch_fingerprint || m.fingerprint) === fp; });
+    }
+    var mode = "";
+    if(batchMode){
+      mode = (ok && same) ? ' · <b>batch ready</b> (identical HDD layouts)' : ' · <b>batch blocked</b>';
+    }
+    $("targetsLine").innerHTML = "<b>"+SERVER_IDS.length+"</b> target"+(SERVER_IDS.length>1?"s":"")+": "+esc(parts.join(" · "))+mode;
+    var caution = $("installedCaution");
+    if(caution && window.CopperInstalled){
+      var installed = window.CopperInstalled.installedNamesFromMeta(META);
+      if(installed.length){
+        caution.hidden = false;
+        caution.textContent = "CAUTION: labeled \"installed\" — "+installed.join(", ")+
+          ". Deploying again will overwrite disks on a provisioned OS.";
+      } else {
+        caution.hidden = true;
+        caution.textContent = "";
+      }
+    }
+    if(batchMode && (!ok || !same)){
+      $("btnProvision").disabled = true;
+      if(!same) log("Batch blocked: persisted HDD layouts differ. Open Storage / pin-direct per host, or select a matching set.", "error");
+      else log("Batch blocked: one or more hosts have no persisted layout.", "error");
+    }
+    var href = batchMode ? ("/storage?ids="+SERVER_IDS.join(",")) : ("/servers/"+SERVER_IDS[0]+"/storage");
+    $("linkStorage").href = href;
+    var sr = $("linkSoftRaid");
+    if (sr) {
+      sr.href = batchMode ? ("/softraid?ids="+SERVER_IDS.join(",")) : ("/servers/"+SERVER_IDS[0]+"/softraid");
+    }
+  }
+
+  function fillTargets(targets, liveDisks){
+    var sel=$("targetDisk");
+    var prevKey = targetKeyOf(selectedTargetOpt());
+    var prevDev = sel.value;
+    sel.innerHTML="";
+    var seen={};
+    function add(dev, label, meta){
+      meta = meta || {};
+      var dedupe = (meta.key ? "k:"+meta.key : "") || dev || ("?"+label);
+      if(seen[dedupe]) return;
+      seen[dedupe]=true;
+      if(dev) seen[dev]=true;
+      var o=document.createElement("option");
+      o.value=dev || "";
+      var role = roleLabelFromTarget({label: label}) || label || dev || "(unknown)";
+      o.setAttribute("data-role", role);
+      if(meta.key) o.setAttribute("data-key", meta.key);
+      if(meta.source) o.setAttribute("data-source", meta.source);
+      if(batchMode && meta.key){
+        o.textContent = role + (dev ? " · (e.g. "+dev+" on first host)" : " · (no /dev yet)");
+      } else {
+        o.textContent = label || dev || "(unknown)";
+      }
+      if(!dev) o.disabled = true;
+      sel.appendChild(o);
+    }
+    // Prefer persisted layout labels (same naming as Storage console).
+    (targets||[]).forEach(function(t){
+      add(t.device, t.label || t.device, {key: t.key || "", source: t.source || ""});
+    });
+    (liveDisks||[]).forEach(function(d){
+      var path=d.path || ("/dev/"+d.name);
+      if(seen[path]) return;
+      add(path, path+" · "+(d.size||"")+" · live lsblk", {key: "", source: "disk"});
+    });
+    if(!sel.options.length){
+      var o=document.createElement("option"); o.value=""; o.textContent="— no disks —"; sel.appendChild(o);
+    }
+    // Prefer previous role, then first array target with a real /dev path.
+    var preferred = "";
+    if(prevKey){
+      for(var i=0;i<sel.options.length;i++){
+        if(sel.options[i].getAttribute("data-key") === prevKey && sel.options[i].value){
+          preferred = sel.options[i].value;
+          break;
+        }
+      }
+    }
+    if(!preferred && prevDev && seen[prevDev]) preferred = prevDev;
+    if(!preferred){
+      (targets||[]).some(function(t){
+        if(t.source==="array" && t.device){ preferred=t.device; return true; }
+        return false;
+      });
+    }
+    var hint = preferred || (META[0] && META[0].target_hint) || "";
+    if(hint && seen[hint]) sel.value=hint;
+    var lblText = $("targetDiskLabelText");
+    if(lblText){
+      lblText.textContent = batchMode ? "Install target (same role on every host)" : "Install target";
+    }
+    updateBootHint();
+    updateProvisionEnabled();
+  }
+
+  async function loadLayoutsAll(){
+    if(!batchMode) return;
+    await Promise.all(SERVER_IDS.map(async function(id){
+      var r = await fetch("/api/servers/"+id+"/layout", {credentials:"same-origin"});
+      var j = await r.json().catch(function(){ return {}; });
+      if(r.ok && j.layout){
+        layoutsById[id] = j.layout;
+      }
+    }));
+    updateTargetMap();
+  }
+
+  function fillNICsFromUnion(names, sampleByName){
+    var sel=$("netIface");
+    var prev = sel.value;
+    sel.innerHTML="";
+    (names||[]).forEach(function(name){
+      if(!name) return;
+      var sample = sampleByName[name] || {};
+      var o=document.createElement("option");
+      o.value=name;
+      if(sample.mac) o.setAttribute("data-mac", sample.mac);
+      var extra = sample.mac ? " · "+sample.mac : "";
+      if(batchMode) extra = " · (MAC per host)";
+      o.textContent=name+extra;
+      sel.appendChild(o);
+    });
+    if(!sel.options.length){
+      var o=document.createElement("option"); o.value=""; o.textContent="— refresh NICs —"; sel.appendChild(o);
+    } else if(prev){
+      sel.value = prev;
+      if(sel.value !== prev) sel.selectedIndex = 0;
+    }
+    updateNetPreview();
+    updateProvisionEnabled();
+  }
+
+  function updateProvisionEnabled(){
+    if(batchMode){
+      var ok = META.every(function(m){ return m.ok && (m.batch_fingerprint || m.fingerprint); });
+      var fp = META[0] && (META[0].batch_fingerprint || META[0].fingerprint);
+      var same = META.every(function(m){ return (m.batch_fingerprint || m.fingerprint) === fp; });
+      if(!ok || !same){ $("btnProvision").disabled=true; return; }
+    }
+    var img = $("imageURL").value.trim() || $("imagePath").value;
+    var disk = $("targetDisk").value;
+    var user = $("ciUser").value.trim();
+    var pass = $("ciPass").value;
+    var ns = nicSelectMode();
+    var iface = $("netIface").value;
+    var netOk = ns === "data_nic" ? true : !!iface;
+    if($("netMode").value==="static"){
+      var allPinned = META.every(function(m){ return !!(m.provisioned_ip_cidr||"").trim(); });
+      if(!allPinned){
+        var cidr = $("netCIDR").value.trim();
+        netOk = netOk && !!cidr;
+        if(batchMode && cidr && cidr.indexOf("{n") < 0){
+          netOk = false;
+        }
+      }
+    }
+    var ready = !!(img && disk && user && pass && netOk);
+    $("btnProvision").disabled = busy || !ready;
+    if($("btnPreflight")) $("btnPreflight").disabled = busy || !ready;
+    updateBootHint();
+    updateNetPreview();
+  }
+
+  async function loadLayoutPrimary(){
+    var id = SERVER_IDS[0];
+    var r = await fetch("/api/servers/"+id+"/layout", {credentials:"same-origin"});
+    var j = await r.json().catch(function(){ return {}; });
+    if(!r.ok){
+      $("layoutInfo").innerHTML = esc(j.error || "no layout");
+      fillTargets([], []);
+      layoutsById = {};
+      updateTargetMap();
+      return;
+    }
+    var lay = j.layout || {};
+    layoutsById[id] = lay;
+    var nArr = (lay.targets||[]).filter(function(t){ return t.source==="array"; }).length;
+    var missingDev = (lay.targets||[]).filter(function(t){ return t.source==="array" && !t.device; }).length;
+    $("layoutInfo").innerHTML = "mode=<b>"+esc(lay.mode||"?")+"</b> family=<b>"+esc(lay.family||"—")+"</b>"+
+      (nArr? " · <b>"+nArr+" array(s)</b>":"")+
+      (missingDev? ' · <span class="error">'+missingDev+' array(s) missing /dev — click Reload layout</span>':"")+
+      " · fingerprint=<code>"+esc((lay.fingerprint||"").slice(0,72))+"</code>"+
+      (lay.targets&&lay.targets.length? " · "+lay.targets.length+" target(s)":"")+
+      (batchMode? " · batch resolves <code>/dev</code> per host":"");
+    fillTargets(lay.targets||[], []);
+    if(batchMode) await loadLayoutsAll();
+  }
+
+  var layoutActionBusy = false;
+
+  function setLayoutBusy(on, msg){
+    layoutActionBusy = !!on;
+    var el = $("layoutBusy");
+    var txt = $("layoutBusyText");
+    if(el) el.hidden = !on;
+    if(txt) txt.textContent = msg || "Working…";
+    ["btnReloadLayout","btnPinDirect","btnRefreshDisks"].forEach(function(id){
+      var b = $(id);
+      if(b) b.disabled = !!on;
+    });
+    var sel = $("targetDisk");
+    if(sel) sel.disabled = !!on;
+    if(on){
+      $("layoutInfo").innerHTML = esc(msg || "Working…");
+    }
+  }
+
+  async function waitJob(jobId){
+    function onUpdate(job){
+      var name = job.server_name || nameById[job.server_id] || job.server_id || "";
+      var phase = job.phase || job.status || "running";
+      setLayoutBusy(true, (name ? name+": " : "")+phase+"…");
+    }
+    var jobs = window.CopperJobs;
+    if(jobs && typeof jobs.pollUntilDone === "function"){
+      return jobs.pollUntilDone(jobId, 300000, onUpdate);
+    }
+    for(var i = 0; i < 50; i++){
+      await new Promise(function(r){ setTimeout(r, 100); });
+      jobs = window.CopperJobs;
+      if(jobs && typeof jobs.pollUntilDone === "function"){
+        return jobs.pollUntilDone(jobId, 300000, onUpdate);
+      }
+    }
+    throw new Error("job poller unavailable — reload the page (app.js did not load)");
+  }
+
+  function jobResult(job){
+    if(window.CopperJobs && window.CopperJobs.parseResult){
+      return window.CopperJobs.parseResult(job) || {};
+    }
+    var result = job && job.result;
+    if(typeof result === "string"){
+      try { result = JSON.parse(result); } catch(_e) {}
+    }
+    return result && typeof result === "object" ? result : {};
+  }
+
+  async function fetchStorageConfig(id){
+    var r = await fetch("/api/servers/"+id+"/storage/config", {credentials:"same-origin"});
+    var j = await r.json().catch(function(){ return {}; });
+    if(!r.ok) throw new Error(j.error || ("config "+r.status));
+    if(j.job_id){
+      if(window.CopperJobs) window.CopperJobs.track(j.job_id);
+      var job = await waitJob(j.job_id);
+      if(job.status === "error" || job.status === "cancelled"){
+        throw new Error(job.error || ("config job "+job.status));
+      }
+      return jobResult(job);
+    }
+    return j;
+  }
+
+  async function applyHostLayout(id, index){
+    var lr = await fetch("/api/servers/"+id+"/layout", {credentials:"same-origin"});
+    var lj = await lr.json().catch(function(){ return {}; });
+    if(!lr.ok || !lj.layout) return null;
+    var lay = lj.layout;
+    layoutsById[id] = lay;
+    if(META[index]){
+      META[index].fingerprint = lay.fingerprint;
+      META[index].batch_fingerprint = lay.batch_fingerprint || lay.fingerprint || "";
+      META[index].mode = lay.mode;
+      META[index].family = lay.family || META[index].family;
+      META[index].ok = !!(lay.ok || lay.fingerprint || lay.batch_fingerprint);
+      var t = (lay.targets||[]).find(function(x){ return (x.source==="array"||x.source==="md") && x.device; }) ||
+              (lay.targets||[])[0];
+      META[index].target_hint = t && t.device || "";
+    }
+    // Update Install target as soon as the primary host layout is ready.
+    if(String(id) === String(SERVER_IDS[0])){
+      var nArr = (lay.targets||[]).filter(function(t){ return t.source==="array"||t.source==="md"; }).length;
+      var missingDev = (lay.targets||[]).filter(function(t){ return (t.source==="array"||t.source==="md") && !t.device; }).length;
+      $("layoutInfo").innerHTML = "mode=<b>"+esc(lay.mode||"?")+"</b> family=<b>"+esc(lay.family||"—")+"</b>"+
+        (nArr? " · <b>"+nArr+" array(s)</b>":"")+
+        (missingDev? ' · <span class="error">'+missingDev+' array(s) missing /dev</span>':"")+
+        " · fingerprint=<code>"+esc((lay.fingerprint||"").slice(0,72))+"</code>"+
+        (lay.batch_fingerprint && lay.batch_fingerprint!==lay.fingerprint
+          ? " · batch=<code>"+esc(lay.batch_fingerprint.slice(0,72))+"</code>" : "")+
+        (lay.targets&&lay.targets.length? " · "+lay.targets.length+" target(s)":"")+
+        (batchMode? " · batch resolves <code>/dev</code> per host":"");
+      fillTargets(lay.targets||[], []);
+    }
+    return lay;
+  }
+
+  async function reloadLayout(){
+    if(layoutActionBusy) return;
+    setLayoutBusy(true, "Reloading layout…");
+    log("reloading storage config (rescan + persist layout)…");
+    try {
+      for(var i=0;i<SERVER_IDS.length;i++){
+        var id=SERVER_IDS[i];
+        var label = nameById[id]||id;
+        setLayoutBusy(true, "Reloading "+label+"…");
+        log(label+": starting storage config job…");
+        var cfg = await fetchStorageConfig(id);
+        var arrays = cfg.arrays||[];
+        var withDev = arrays.filter(function(a){ return a.ld && a.ld.disk; }).length;
+        log(label+": "+arrays.length+" array(s), "+withDev+" with /dev","ok");
+        if(META[i]){
+          META[i].ok = true;
+          META[i].mode = "raid";
+          META[i].family = cfg.family||META[i].family;
+        }
+        setLayoutBusy(true, "Updating targets for "+label+"…");
+        await applyHostLayout(id, i);
+      }
+      targetsLine();
+      if(batchMode){
+        setLayoutBusy(true, "Refreshing per-host target map…");
+        await loadLayoutsAll();
+      }
+      updateBootHint();
+      updateProvisionEnabled();
+      log("layout reload complete","ok");
+    } catch(e){
+      log(String(e && e.message ? e.message : e), "error");
+      $("layoutInfo").innerHTML = '<span class="error">'+esc(String(e && e.message ? e.message : e))+"</span>";
+    } finally {
+      setLayoutBusy(false);
+    }
+  }
+
+  async function refreshDisks(){
+    if(layoutActionBusy) return;
+    var id = SERVER_IDS[0];
+    setLayoutBusy(true, "Refreshing live disks…");
+    log("refreshing live disks on "+(nameById[id]||id)+"…");
+    try {
+      var r = await fetch("/api/servers/"+id+"/host/disks", {credentials:"same-origin"});
+      var j = await r.json().catch(function(){ return {}; });
+      if(!r.ok){ throw new Error(j.error||"disks failed"); }
+      var layR = await fetch("/api/servers/"+id+"/layout", {credentials:"same-origin"});
+      var layJ = await layR.json().catch(function(){ return {}; });
+      if(layR.ok && layJ.layout) layoutsById[id] = layJ.layout;
+      fillTargets((layJ.layout&&layJ.layout.targets)||[], j.disks||[]);
+      log("disks: "+(j.disks||[]).map(function(d){ return d.path||d.name; }).join(", "),"ok");
+      if(batchMode) await loadLayoutsAll();
+      updateBootHint();
+      updateProvisionEnabled();
+    } catch(e){
+      log(String(e && e.message ? e.message : e), "error");
+    } finally {
+      setLayoutBusy(false);
+    }
+  }
+
+  async function refreshNICs(){
+    log("refreshing NICs on "+SERVER_IDS.length+" host(s)…");
+    nicsByServer = {};
+    var nameSets = [];
+    var sampleByName = {};
+    for(var i=0;i<SERVER_IDS.length;i++){
+      var id = SERVER_IDS[i];
+      var r = await fetch("/api/servers/"+id+"/host/nics", {credentials:"same-origin"});
+      var j = await r.json().catch(function(){ return {}; });
+      if(!r.ok){
+        log((nameById[id]||id)+": "+(j.error||"nics failed"),"error");
+        continue;
+      }
+      var nics = j.nics || [];
+      nicsByServer[id] = nics;
+      var names = {};
+      nics.forEach(function(n){
+        if(!n.name) return;
+        names[n.name] = true;
+        if(!sampleByName[n.name]) sampleByName[n.name] = n;
+      });
+      nameSets.push(names);
+      log((nameById[id]||id)+": "+nics.map(function(n){ return n.name; }).join(", ") || "(none)");
+    }
+    var intersection = null;
+    nameSets.forEach(function(set){
+      if(!intersection){ intersection = Object.keys(set); return; }
+      intersection = intersection.filter(function(n){ return set[n]; });
+    });
+    if(!intersection) intersection = [];
+    if(batchMode && intersection.length){
+      log("common interface names: "+intersection.join(", "),"ok");
+    } else if(batchMode){
+      log("no common interface names across hosts — use Data DHCP NIC mode, or fix naming","error");
+    }
+    // Single host: show all NICs; batch: prefer intersection, else first host's names.
+    var names = intersection;
+    if(!batchMode){
+      names = (nicsByServer[SERVER_IDS[0]]||[]).map(function(n){ return n.name; }).filter(Boolean);
+    } else if(!names.length && nameSets.length){
+      names = Object.keys(nameSets[0]);
+    }
+    fillNICsFromUnion(names, sampleByName);
+  }
+
+  async function pinDirect(){
+    if(layoutActionBusy) return;
+    setLayoutBusy(true, "Pinning direct disks…");
+    log("pinning direct (non-RAID) disk layout on all targets…");
+    try {
+      for(var i=0;i<SERVER_IDS.length;i++){
+        var id=SERVER_IDS[i];
+        var label = nameById[id]||id;
+        setLayoutBusy(true, "Pinning "+label+"…");
+        var r = await fetch("/api/servers/"+id+"/layout/pin-direct", {method:"POST", credentials:"same-origin"});
+        var j = await r.json().catch(function(){ return {}; });
+        if(!r.ok){ throw new Error(label+": "+(j.error||"pin failed")); }
+        META[i].fingerprint = j.layout.fingerprint;
+        META[i].batch_fingerprint = j.layout.batch_fingerprint || j.layout.fingerprint || "";
+        META[i].mode = j.layout.mode;
+        META[i].ok = true;
+        META[i].target_hint = (j.layout.targets&&j.layout.targets[0]&&j.layout.targets[0].device)||"";
+        if(j.layout) layoutsById[id] = j.layout;
+        log(label+": pinned "+(j.layout.targets||[]).length+" disk(s)","ok");
+        // Update Install target as soon as primary is pinned.
+        if(String(id) === String(SERVER_IDS[0]) && j.layout){
+          fillTargets(j.layout.targets||[], []);
+          $("layoutInfo").innerHTML = "mode=<b>direct</b> · "+(j.layout.targets||[]).length+" disk(s) pinned";
+        }
+      }
+      targetsLine();
+      if(batchMode) await loadLayoutsAll();
+      else await loadLayoutPrimary();
+      updateBootHint();
+      updateProvisionEnabled();
+      log("pin-direct complete","ok");
+    } catch(e){
+      log(String(e && e.message ? e.message : e), "error");
+      $("layoutInfo").innerHTML = '<span class="error">'+esc(String(e && e.message ? e.message : e))+"</span>";
+    } finally {
+      setLayoutBusy(false);
+    }
+  }
+
+  function ensureRows(ids){
+    ids = ids || SERVER_IDS;
+    ids.forEach(function(id){
+      if(!rowState[id]){
+        rowState[id] = {
+          name: nameById[id] || String(id),
+          status: "idle", phase: "—", last: "", started: 0, finished: 0, jobId: "", error: ""
+        };
+      }
+    });
+    renderTable();
+  }
+
+  function fmtDur(ms){
+    if(!ms || ms < 0) return "—";
+    var s = Math.floor(ms/1000);
+    if(s < 60) return s+"s";
+    var m = Math.floor(s/60); s = s % 60;
+    return m+"m "+s+"s";
+  }
+
+  // Compact "last" cell: DOWNLOAD_PROGRESS pct=47 … → download 47%
+  function formatJobLast(line){
+    line = String(line || "");
+    var m = line.match(/DOWNLOAD_PROGRESS\s+pct=(\d+)/);
+    if(m) return "download "+m[1]+"%";
+    m = line.match(/DOWNLOAD_PROGRESS\s+bytes=(\d+)/);
+    if(m) return "download…";
+    // Strip host-side [phase] prefixes if present for the summary column.
+    return line.replace(/^\[[^\]]+\]\s*/, "").slice(0, 80);
+  }
+
+  function renderTable(){
+    var body = $("provBody");
+    if(!body) return;
+    var ids = Object.keys(rowState).map(Number).sort(function(a,b){ return a-b; });
+    if(!ids.length){
+      ensureRows(SERVER_IDS);
+      ids = SERVER_IDS.slice();
+    }
+    var html = "";
+    var ok=0, fail=0, run=0, queued=0, idle=0;
+    ids.forEach(function(id){
+      var r = rowState[id];
+      if(!r) return;
+      var st = r.status || "idle";
+      if(st==="ok") ok++;
+      else if(st==="ready") idle++; // preflight passed, not yet writing
+      else if(st==="error") fail++;
+      else if(st==="running") run++;
+      else if(st==="queued") queued++;
+      else idle++;
+      var dur = "—";
+      if(r.started){
+        dur = fmtDur((r.finished || Date.now()) - r.started);
+      }
+      html += "<tr class=\"st-"+esc(st)+"\">"+
+        "<td>"+esc(r.name)+"</td>"+
+        "<td>"+esc(r.phase||"—")+"</td>"+
+        "<td><span class=\"pill st-"+esc(st)+"\">"+esc(st)+"</span></td>"+
+        "<td>"+esc(dur)+"</td>"+
+        "<td class=\"last-line\">"+esc(r.last || r.error || "—")+"</td>"+
+        "</tr>";
+    });
+    body.innerHTML = html;
+    var parts = [];
+    parts.push("<b>"+ids.length+"</b> host(s)");
+    if(run) parts.push(run+" running");
+    if(queued) parts.push(queued+" queued");
+    if(ok) parts.push(ok+" ok");
+    if(fail) parts.push(fail+" failed");
+    if(idle && !run && !queued) parts.push("idle");
+    $("batchSummary").innerHTML = parts.join(" · ");
+    $("btnRetryFailed").disabled = busy || fail === 0;
+  }
+
+  function buildBody(ids, opts){
+    opts = opts || {};
+    var imgPath = $("imagePath").value;
+    var imgURL = $("imageURL").value.trim();
+    var nic = selectedNIC();
+    var ns = nicSelectMode();
+    var hostPat = $("ciHost").value.trim();
+    if(batchMode && !hostPat) hostPat = "{name}";
+    return {
+      ids: ids,
+      image_path: imgURL ? "" : imgPath,
+      image_url: imgURL,
+      target_disk: $("targetDisk").value,
+      set_boot_hdd: $("optBootHDD").checked,
+      reboot: $("optReboot").checked,
+      nic_select: ns,
+      // Checksum skip-write only on Retry Failed — first Deploy always rewrites.
+      reuse_image: !!opts.reuse_image,
+      cidata: {
+        username: $("ciUser").value.trim(),
+        password: $("ciPass").value,
+        hostname: hostPat,
+        network_mode: $("netMode").value,
+        interface: ns === "data_nic" ? "" : nic.name,
+        mac: ns === "data_nic" || batchMode ? "" : nic.mac,
+        address_cidr: $("netCIDR").value.trim(),
+        gateway: $("netGW").value.trim(),
+        dns: ($("netDNS").value||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean)
+      }
+    };
+  }
+
+  function applyPreflightResults(list){
+    (list||[]).forEach(function(p){
+      var id = p.server_id;
+      ensureRows([id]);
+      var r = rowState[id];
+      r.name = p.server_name || r.name;
+      r.status = p.ok ? "ready" : "error";
+      r.phase = "preflight";
+      r.last = p.ok ? "preflight OK" : (p.error || "preflight failed");
+      r.error = p.ok ? "" : (p.error || "");
+      r.finished = Date.now();
+      if(p.warnings && p.warnings.length){
+        p.warnings.forEach(function(w){ log((p.server_name||id)+": "+w, "error"); });
+      }
+      if(!p.ok) log((p.server_name||id)+": "+(p.error||"preflight failed"), "error");
+      else log((p.server_name||id)+": preflight OK", "ok");
+    });
+    renderTable();
+  }
+
+  async function pollJob(jobId, serverId, name, okLabel){
+    okLabel = okLabel || "provision OK";
+    var seen = 0;
+    ensureRows([serverId]);
+    rowState[serverId].jobId = jobId;
+    rowState[serverId].name = name || rowState[serverId].name;
+    rowState[serverId].started = Date.now();
+    rowState[serverId].finished = 0;
+    for(;;){
+      var r = await fetch("/api/jobs/"+jobId, {credentials:"same-origin"});
+      var j = await r.json().catch(function(){ return {}; });
+      if(!r.ok){
+        rowState[serverId].status = "error";
+        rowState[serverId].phase = "error";
+        rowState[serverId].last = "poll failed";
+        rowState[serverId].finished = Date.now();
+        renderTable();
+        log(name+": poll failed","error");
+        return false;
+      }
+      var job = j.job || {};
+      var lines = job.log || [];
+      rowState[serverId].status = job.status || rowState[serverId].status;
+      rowState[serverId].phase = job.phase || rowState[serverId].phase;
+      // Prefer live job.progress (updated every ~2s during curl) over log tail.
+      if(job.progress){
+        rowState[serverId].last = formatJobLast(job.progress);
+      } else if(lines.length){
+        rowState[serverId].last = formatJobLast(lines[lines.length-1]);
+      }
+      for(; seen < lines.length; seen++){
+        var cls = "";
+        var raw = lines[seen];
+        if(/\[error\]/i.test(raw) || /ERROR:/i.test(raw)) cls = "error";
+        else if(/WARN:|EFIBOOT_SKIP/i.test(raw)) cls = "error";
+        else if(/WRITE_OK|CIDATA_OK|GPT_OK|REIDENTIFY_OK|EFIBOOT_OK|finished OK|preflight OK/i.test(raw)) cls = "ok";
+        // DOWNLOAD_PROGRESS is noisy in the log pane; keep table "last" updated,
+        // only echo milestone %% lines (0/25/50/75/100) into the shared log.
+        var dm = raw.match(/DOWNLOAD_PROGRESS\s+pct=(\d+)/);
+        if(dm){
+          var pct = parseInt(dm[1], 10);
+          if(pct === 0 || pct === 100 || pct % 25 === 0){
+            log(name+" download "+pct+"%", cls);
+          }
+          continue;
+        }
+        log(name+" "+raw, cls);
+      }
+      renderTable();
+      if(job.status==="ok"){
+        rowState[serverId].status = "ok";
+        rowState[serverId].phase = "done";
+        rowState[serverId].finished = Date.now();
+        rowState[serverId].last = okLabel;
+        renderTable();
+        log(name+": "+okLabel,"ok");
+        return true;
+      }
+      if(job.status==="error" || job.status==="cancelled"){
+        rowState[serverId].status = "error";
+        rowState[serverId].phase = "error";
+        rowState[serverId].finished = Date.now();
+        rowState[serverId].error = job.error || "";
+        rowState[serverId].last = (job.error||"error").split("\n")[0];
+        renderTable();
+        if(job.error){
+          String(job.error).split("\n").forEach(function(line){
+            if(String(line).trim()) log(name+": "+line, "error");
+          });
+        }
+        return false;
+      }
+      await new Promise(function(res){ setTimeout(res, 1200); });
+    }
+  }
+
+  async function pollAllJobs(jobs, okLabel){
+    if(window.CopperJobs) window.CopperJobs.trackMany(jobs || []);
+    var results = await Promise.all((jobs||[]).map(function(j){
+      var id = j.server_id;
+      var name = j.server_name || nameById[id] || id;
+      if(rowState[id]){
+        rowState[id].status = "queued";
+        rowState[id].phase = "queued";
+        rowState[id].last = "queued";
+      }
+      return pollJob(j.job_id, id, name, okLabel);
+    }));
+    renderTable();
+    return results.every(Boolean);
+  }
+
+  function setBusy(v){
+    busy = !!v;
+    updateProvisionEnabled();
+    $("btnPreflight").disabled = busy || $("btnProvision").disabled;
+    if(busy) $("btnRetryFailed").disabled = true;
+  }
+
+  async function runPreflight(){
+    var body = buildBody(SERVER_IDS);
+    body.preflight_only = true;
+    lastBody = body;
+    ensureRows(SERVER_IDS);
+    SERVER_IDS.forEach(function(id){
+      rowState[id].status = "queued";
+      rowState[id].phase = "preflight";
+      rowState[id].last = "queued…";
+      rowState[id].started = Date.now();
+      rowState[id].finished = 0;
+      rowState[id].error = "";
+    });
+    renderTable();
+    setBusy(true);
+    log("preflight on "+SERVER_IDS.length+" host(s)…");
+    try {
+      var r = await fetch("/api/provision", {
+        method:"POST", credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if(j.executors) log("executors="+j.executors);
+      if(!r.ok){
+        log(j.error || ("preflight "+r.status), "error");
+        SERVER_IDS.forEach(function(id){
+          if(rowState[id]){
+            rowState[id].status = "error";
+            rowState[id].phase = "error";
+            rowState[id].last = j.error || "failed";
+            rowState[id].finished = Date.now();
+          }
+        });
+        return;
+      }
+      var jobs = j.jobs || [];
+      var allOk = await pollAllJobs(jobs, "preflight OK");
+      if(allOk) log("preflight passed on all hosts","ok");
+      else log("preflight failed on some host(s)", "error");
+    } finally {
+      setBusy(false);
+      renderTable();
+    }
+  }
+
+  async function startProvision(ids, opts){
+    opts = opts || {};
+    ids = ids && ids.length ? ids : SERVER_IDS;
+    var body = buildBody(ids, opts);
+    lastBody = body;
+    var bootNote = body.set_boot_hdd ? ("\nBMC boot override → Disabled (efibootmgr BootOrder for "+body.target_disk+")") : "";
+    var reuseNote = body.reuse_image
+      ? "\nRetry mode: if the image checksum already matches on disk, skip rewrite and re-do GPT/cidata/boot only."
+      : "\nThis destroys existing data on that disk.";
+    if(!confirm((body.reuse_image ? "Retry provision" : "Raw-write cloud image")+" to "+body.target_disk+" on "+ids.length+" server(s)?"+bootNote+"\nPreflight runs first; no write starts if any host fails."+reuseNote)) return;
+    var installedNames = window.CopperInstalled
+      ? window.CopperInstalled.installedNamesFromMeta(META.filter(function(m){ return ids.indexOf(m.id) >= 0 || ids.indexOf(String(m.id)) >= 0; }))
+      : [];
+    // Also match by numeric id when ids are strings.
+    if(window.CopperInstalled && !installedNames.length){
+      installedNames = window.CopperInstalled.installedNamesFromMeta(META.filter(function(m){
+        return ids.some(function(id){ return String(id) === String(m.id); });
+      }));
+    }
+    if(window.CopperInstalled && !window.CopperInstalled.confirmDestructive(installedNames, "Deploy OS / overwrite disk")) return;
+    ensureRows(ids);
+    ids.forEach(function(id){
+      rowState[id].status = "queued";
+      rowState[id].phase = "preflight";
+      rowState[id].last = "preflight gate…";
+      rowState[id].started = Date.now();
+      rowState[id].finished = 0;
+      rowState[id].error = "";
+      rowState[id].jobId = "";
+    });
+    renderTable();
+    setBusy(true);
+    log("starting provision on "+ids.length+" host(s)…");
+    try {
+      var r = await fetch("/api/provision", {
+        method:"POST", credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if(j.preflight) applyPreflightResults(j.preflight);
+      if(!r.ok){
+        log(j.error||("provision "+r.status),"error");
+        ids.forEach(function(id){
+          if(rowState[id] && rowState[id].status !== "error"){
+            rowState[id].status = "error";
+            rowState[id].phase = "blocked";
+            rowState[id].last = j.error || "blocked";
+            rowState[id].finished = Date.now();
+          }
+        });
+        renderTable();
+        return;
+      }
+      if(j.image_url) log("image_url="+j.image_url);
+      if(j.executors) log("executors="+j.executors+" (write concurrency)");
+      var jobs = j.jobs || [];
+      var allOk = await pollAllJobs(jobs);
+      log(allOk ? "all jobs finished OK" : "finished with errors", allOk?"ok":"error");
+    } finally {
+      setBusy(false);
+      renderTable();
+    }
+  }
+
+  function retryFailed(){
+    var failed = Object.keys(rowState).map(Number).filter(function(id){
+      return rowState[id] && rowState[id].status === "error";
+    });
+    if(!failed.length) return;
+    startProvision(failed, {reuse_image: true});
+  }
+
+  $("netMode").addEventListener("change", function(){
+    $("staticFields").hidden = $("netMode").value !== "static";
+    syncBatchFormHints();
+  });
+  document.querySelectorAll('input[name="nicSelect"]').forEach(function(el){
+    el.addEventListener("change", syncBatchFormHints);
+  });
+  ["imagePath","imageURL","targetDisk","ciUser","ciPass","ciHost","netIface","netCIDR","netGW","netDNS"].forEach(function(id){
+    $(id).addEventListener("input", updateProvisionEnabled);
+    $(id).addEventListener("change", updateProvisionEnabled);
+  });
+  $("targetDisk").addEventListener("change", updateBootHint);
+  $("btnRefreshDisks").addEventListener("click", refreshDisks);
+  $("btnRefreshNICs").addEventListener("click", refreshNICs);
+  $("btnPinDirect").addEventListener("click", pinDirect);
+  $("btnReloadLayout").addEventListener("click", reloadLayout);
+  $("btnProvision").addEventListener("click", function(){ startProvision(SERVER_IDS); });
+  $("btnPreflight").addEventListener("click", runPreflight);
+  $("btnRetryFailed").addEventListener("click", retryFailed);
+
+  targetsLine();
+  syncBatchFormHints();
+  updateBootHint();
+  ensureRows(SERVER_IDS);
+  loadLayoutPrimary().then(function(){ return refreshNICs(); }).catch(function(e){ log(String(e),"error"); });
+})();
+</script>
+<style>
+#deploy-page.wide { max-width: 1100px; }
+fieldset.nic-select {
+  border: 1px solid var(--line); border-radius: 6px; padding: 0.6rem 0.85rem; margin: 0.35rem 0;
+}
+fieldset.nic-select legend { padding: 0 0.35rem; color: var(--muted); font-size: 0.85rem; }
+#cidataPreviewWrap { margin-top: 0.75rem; }
+#provLog.console, #netPreview.console {
+  min-height: 180px; max-height: 360px; overflow: auto;
+  background: var(--console); color: var(--console-fg);
+  padding: 0.75rem 1rem; font-family: var(--font-mono); font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+#netPreview.console { min-height: 7rem; max-height: 14rem; }
+.cidata-paths { margin: 0.25rem 0 0.75rem 1.1rem; padding: 0; }
+.cidata-paths li { margin: 0.2rem 0; }
+#provLog .error { color: #ffb4a0; }
+#provLog .ok { color: #9be7a8; }
+.table-wrap { overflow-x: auto; }
+table.prov-status { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.prov-status th, table.prov-status td {
+  text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+table.prov-status th { color: var(--muted); font-weight: 600; }
+table.prov-status td.last-line {
+  font-family: var(--font-mono); font-size: 0.78rem; max-width: 28rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pill {
+  display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px;
+  font-size: 0.78rem; font-weight: 600;
+}
+.pill.st-ok { background: #e4f6ea; color: #1b6b3a; }
+.pill.st-ready { background: #e4f6ea; color: #1b6b3a; }
+.pill.st-error { background: var(--orange-soft); color: var(--danger); }
+.pill.st-running { background: var(--blue-soft); color: var(--blue-deep); }
+.pill.st-queued { background: #f0f2f5; color: var(--muted); }
+.pill.st-idle { background: #f0f2f5; color: var(--muted); }
+.target-map {
+  margin: 0.35rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2, #fafbfc);
+}
+.target-map-summary { margin: 0 0 0.5rem; line-height: 1.45; }
+.target-map-wrap {
+  max-height: 16rem;
+  overflow: auto;
+  margin: 0;
+}
+.target-map .error { color: var(--danger); }
+.btn-tiny {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.78rem;
+  margin-left: 0.35rem;
+  vertical-align: baseline;
+}
+.layout-actions { align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.layout-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: 0.25rem;
+}
+.layout-busy[hidden] { display: none !important; }
+.layout-spinner { display: block; color: var(--orange); }
+.layout-arc {
+  transform-origin: 12px 12px;
+  animation: busy-spin 0.85s linear infinite;
+}
+</style>
+{{end}}

@@ -1,0 +1,1579 @@
+{{define "content"}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+.storage-page{
+  --bg:#e9ecef; --panel:#f7f8f9; --panel2:#dfe3e7; --ink:#1c2228; --ink2:#55606b; --line:#c5ccd3;
+  --steel:#8a949e; --bay:#2b3238; --bayface:#353d44; --slot:#20262b;
+  --amber:#e8a317; --green:#3fb950; --red:#d94848; --blue:#2f6fed; --sel:#e8a317;
+  --font:"Atkinson Hyperlegible",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  box-sizing:border-box; width:100%; max-width:1100px; margin:0 auto; padding:8px 0 48px;
+  color:var(--ink); font-family:var(--font); font-size:15px; line-height:1.45;
+}
+.storage-page *,.storage-page *::before,.storage-page *::after{box-sizing:border-box}
+.storage-page header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 22px;margin-bottom:18px}
+.storage-page header h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
+.storage-page .ctl{color:var(--ink2); flex:1 1 240px; min-width:0; overflow-wrap:anywhere}
+.storage-page .ctl b{color:var(--ink)}
+.storage-page .conn{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.storage-page .pill{font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--ink2)}
+.storage-page .pill.live{border-color:var(--green);color:var(--green)}
+.storage-page .chassis{background:var(--bay);border-radius:10px;padding:18px 16px 16px;color:#d7dde3;box-shadow:inset 0 2px 0 rgba(255,255,255,.06),0 10px 30px rgba(0,0,0,.25); overflow:hidden; min-width:0}
+.storage-page .chassis .caption{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:#9aa4ae}
+.storage-page .chassis .caption span b{color:#e6eaee;font-weight:700}
+/* Ports sit side-by-side when wide enough; wrap under each other when not. */
+.storage-page .bays{display:flex; flex-wrap:wrap; gap:14px; align-items:stretch; min-width:0}
+.storage-page .port{
+  flex:1 1 320px; min-width:0; max-width:100%;
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px;
+  padding:14px 10px 10px; border:1px solid #3b444d; border-radius:8px; position:relative;
+}
+.storage-page .port::before{content:attr(data-port);position:absolute;top:-9px;left:10px;background:var(--bay);padding:0 6px;font-size:12px;color:#9aa4ae}
+.storage-page .bay{
+  position:relative; min-width:0; min-height:88px; aspect-ratio:auto;
+  background:var(--bayface); border-radius:6px; border:2px solid #3b444d; cursor:pointer;
+  padding:9px 10px 28px; text-align:left;
+  display:flex; flex-direction:column; justify-content:space-between; gap:4px;
+  transition:border-color .15s,transform .15s,box-shadow .15s; color:inherit; font:inherit; width:100%;
+}
+.storage-page .bay:hover{border-color:var(--steel)}
+.storage-page .bay.empty{background:var(--slot);cursor:default;border-style:dashed;opacity:.55; min-height:72px}
+.storage-page .bay .num{font-size:11px;color:#9aa4ae; padding-right:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.storage-page .bay .cap{font-size:17px;font-weight:700;color:#f1f4f7;line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.storage-page .bay .kind{font-size:11px;color:#aab3bc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.storage-page .bay .led{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:#505a63}
+.storage-page .bay .led.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.storage-page .bay .led.warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.storage-page .bay .led.bad{background:var(--red);box-shadow:0 0 6px var(--red)}
+.storage-page .bay .led.blink{animation:stblink .6s steps(2) infinite}
+@keyframes stblink{to{opacity:.15}}
+.storage-page .bay .tag{position:absolute;bottom:8px;right:9px;font-size:11px;padding:1px 6px;border-radius:4px;background:#3b444d;color:#dfe5ea;max-width:78%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.storage-page .bay .tag.arr{background:#2f6fed;color:#fff}
+.storage-page .bay .tag.arr.sliced{background:#1f4fc4;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+.storage-page .bay .tag.jbod{background:#3fb950;color:#07160b}   /* OS-visible passthrough */
+.storage-page .bay .tag.ugood{background:#c9a227;color:#1c1300} /* controller-held free */
+.storage-page .bay .tag.free{background:#3fb950;color:#07160b}   /* Smart Array unassigned */
+.storage-page .bay .tag.spare{background:#8a949e;color:#1c2228}
+.storage-page .bay .tag.bad{background:#d94848;color:#fff}
+.storage-page .bay .tag.busy{background:#e8a317;color:#1c1300}
+.storage-page .bay.held{border-color:#6b5a1e} /* UGood: in chassis, not in lsblk */
+.storage-page .bay.osvis{border-color:#2f6a3a}
+/* Selection must win over held/osvis role borders (same specificity otherwise). */
+.storage-page .bay.sel,
+.storage-page .bay.sel.held,
+.storage-page .bay.sel.osvis{
+  border-color:var(--sel);
+  transform:translateY(-2px);
+  box-shadow:0 0 0 1px var(--sel), 0 0 14px rgba(232,163,23,.55), 0 4px 12px rgba(0,0,0,.35);
+  z-index:1;
+}
+.storage-page .bay-legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px;font-size:12px;color:#9aa4ae}
+.storage-page .bay-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.storage-page .bay-legend .l-jbod i{background:#3fb950}
+.storage-page .bay-legend .l-ugood i{background:#c9a227}
+.storage-page .bay-legend .l-arr i{background:#2f6fed}
+.storage-page .bay-legend .l-sliced i{background:#1f4fc4;box-shadow:inset 0 0 0 1px rgba(255,255,255,.45)}
+.storage-page .bay-legend .l-bad i{background:#d94848}
+.storage-page .grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.9fr);gap:18px;margin-top:18px; min-width:0}
+@media (max-width:980px){
+  .storage-page .grid{grid-template-columns:1fr}
+  .storage-page .port{flex-basis:100%}
+}
+.storage-page section.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px; min-width:0}
+.storage-page section.panel h2{font-size:15px;margin:0 0 10px;font-weight:700}
+.storage-page .sub{color:var(--ink2);font-size:13px}
+.storage-page .array{border-top:1px solid var(--line);padding:12px 0;border-radius:8px;transition:background .2s,box-shadow .2s}
+.storage-page .array:first-of-type{border-top:0;padding-top:4px}
+.storage-page .array.hl{background:rgba(47,111,237,.12);box-shadow:inset 0 0 0 2px var(--blue)}
+.storage-page .array .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.storage-page .array .name{font-weight:700}
+.storage-page .array .meta{color:var(--ink2);font-size:13px}
+.storage-page .array .slice-note{display:inline-block;margin-top:6px;font-size:12px;font-weight:600;color:#1f4fc4;background:rgba(47,111,237,.12);border:1px solid rgba(47,111,237,.35);border-radius:4px;padding:2px 8px}
+.storage-page .array code,.storage-page .mono{font-family:var(--mono);font-size:13px}
+.storage-page .array .acts{margin-left:auto;display:flex;gap:6px}
+.storage-page .drivelist{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.storage-page .chip{font-family:var(--mono);font-size:12px;padding:2px 7px;border-radius:4px;background:var(--panel2);border:1px solid var(--line)}
+.storage-page .empty{color:var(--ink2);padding:10px 0}
+.storage-page .actions .selbox{background:var(--panel2);border-radius:8px;padding:10px 12px;margin-bottom:12px;min-height:46px}
+.storage-page .actions .selbox .n{font-weight:700}
+.storage-page .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.storage-page .field label{font-size:13px;color:var(--ink2)}
+.storage-page .field input[type="text"]{font:inherit;font-family:var(--mono);font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);width:100%;max-width:220px;box-sizing:border-box}
+.storage-page .field input[type="text"]::placeholder{color:var(--ink2);opacity:.85}
+.storage-page .vd-plan{display:flex;flex-direction:column;gap:6px}
+.storage-page .vd-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.storage-page .vd-row .vd-idx{font-size:12px;color:var(--ink2);min-width:2.2em;font-family:var(--mono)}
+.storage-page .vd-row input{flex:1;min-width:120px;max-width:200px;font:inherit;font-family:var(--mono);font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);box-sizing:border-box}
+.storage-page .vd-row input::placeholder{color:var(--ink2);opacity:.85}
+.storage-page .vd-plan-label{font-size:13px;color:var(--ink2);margin-bottom:4px}
+.storage-page select,.storage-page input[type=text]{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+.storage-page .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.storage-page .btn{padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font:inherit;color:inherit}
+.storage-page .btn:hover{background:var(--panel2)}
+.storage-page .btn.primary{background:var(--amber);border-color:var(--amber);color:#1c1300;font-weight:700}
+.storage-page .btn.danger{color:var(--red);border-color:var(--red)}
+.storage-page .btn.sm{padding:4px 9px;font-size:13px}
+.storage-page .btn:disabled{opacity:.45;cursor:not-allowed}
+.storage-page .hint{font-size:13px;color:var(--ink2);margin-top:8px}
+.storage-page .hint.warn{color:var(--amber)}
+.storage-page .cmdprev{font-family:var(--mono);font-size:12.5px;background:var(--slot);color:#d7dde3;padding:8px 10px;border-radius:6px;margin-top:10px;word-break:break-all;white-space:pre-wrap}
+.storage-page .console{margin-top:18px}
+.storage-page .console .head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.storage-page .console .head h2{margin:0;font-size:15px}
+.storage-page .console .head form{margin-left:auto;display:flex;gap:6px;flex:1;max-width:560px}
+.storage-page .console .head input{flex:1;font-family:var(--mono);font-size:13px}
+.storage-page .log{font-family:var(--mono);font-size:12.5px;line-height:1.5;background:var(--slot);color:#cfd6dc;border-radius:8px;padding:12px 14px;max-height:360px;overflow:auto;white-space:pre-wrap}
+.storage-page .log .cmd{color:var(--amber)}.storage-page .log .err{color:#ff8a8a}.storage-page .log .ts{color:#6c757e}
+.storage-page .log:empty::before{content:"Every RAID command this page runs is echoed here.";color:#6c757e}
+.storage-page dialog{border:0;border-radius:10px;background:var(--panel);color:var(--ink);padding:20px 22px;max-width:460px;width:calc(100% - 32px)}
+.storage-page dialog::backdrop{background:rgba(0,0,0,.5)}
+.storage-page dialog h3{margin:0 0 8px;font-size:16px}
+.storage-page .targets{font-size:13px;color:var(--ink2);margin:0 0 12px}
+.storage-page .targets b{color:var(--ink)}
+.storage-page .storage-banner{margin:0 0 14px}
+.storage-page .storage-banner[hidden]{display:none !important}
+</style>
+
+<script type="application/json" id="storage-ids-json">{{.ServerIDs}}</script>
+<script type="application/json" id="storage-meta-json">{{.StorageMeta}}</script>
+<div class="storage-page" id="storage-page">
+<header>
+  <h1>Copper storage</h1>
+  <span class="ctl" id="ctlLine">Loading controller…</span>
+  <div class="conn">
+    <a class="btn sm" href="/">← Servers</a>
+    <span class="pill live" id="connPill">live OS via SSH</span>
+  </div>
+</header>
+<p class="targets" id="targetsLine"></p>
+<p class="error storage-banner" id="installedCaution" hidden></p>
+<p id="copper-page-busy" class="flash storage-banner" hidden></p>
+<p class="flash storage-banner" id="storage-flash" hidden></p>
+<p class="error storage-banner" id="storage-error" hidden></p>
+
+  <div class="chassis" id="chassis" aria-label="Drive bays" hidden>
+  <div class="caption"><span>Front bays. Click to select, shift-click to add. <b id="modeLine"></b></span><span id="selCount"></span></div>
+  <div class="bays" id="bays"></div>
+  <div class="bay-legend" id="bayLegend" hidden>
+    <span class="l-jbod"><i></i>JBOD / OS-visible</span>
+    <span class="l-ugood"><i></i>UGood (controller-held, not in lsblk)</span>
+    <span class="l-arr"><i></i>In array</span>
+    <span class="l-sliced"><i></i>Sliced DG (multiple VDs on same drives)</span>
+    <span class="l-bad"><i></i>Bad / foreign</span>
+  </div>
+</div>
+<p class="sub" id="chassisLoading">Loading live controller config over SSH…</p>
+
+<div class="grid" id="storageGrid" hidden>
+  <section class="panel">
+    <h2>Arrays and logical drives</h2>
+    <div id="arrays"></div>
+  </section>
+  <section class="panel actions">
+    <h2>Do something with the selection</h2>
+    <div class="selbox" id="selbox"></div>
+    <div id="createForm">
+      <div class="field">
+        <label for="raid">RAID level</label>
+        <select id="raid"></select>
+      </div>
+      <div class="field">
+        <label for="ss">Strip size</label>
+        <select id="ss">
+          <option value="">controller default</option>
+          <option>64</option><option>128</option><option selected>256</option><option>512</option><option>1024</option>
+        </select>
+      </div>
+      <div class="field" id="vdPlanField">
+        <div class="vd-plan-label">Virtual drives / logical drives — sizes on this group</div>
+        <div id="vdPlan" class="vd-plan" aria-label="Volume sizes"></div>
+        <div class="btnrow" style="margin-top:4px">
+          <button type="button" class="btn sm" id="vdAddBtn" title="Add another sized volume on the same drive group / array">Add volume</button>
+        </div>
+        <p class="hint" style="margin-top:4px">Example on one disk: <span class="mono">100GB</span> then <span class="mono">all remaining</span> → two VDs/LDs. Empty last row = rest of free space. MegaRAID keeps one RAID level for the whole group; Smart Array may differ per LD later via Slice.</p>
+      </div>
+      <div class="cmdprev" id="cmdprev"></div>
+      <div class="btnrow">
+        <button class="btn primary" id="createBtn" type="button">Create logical drive</button>
+        <button class="btn" id="blinkBtn" type="button">Blink LEDs</button>
+        <button class="btn" id="clearBtn" type="button">Clear selection</button>
+      </div>
+      <div class="btnrow" id="megaPrepRow" hidden style="margin-top:10px">
+        <button class="btn" id="foreignDelBtn" type="button" title="storcli /cN/fall del">Clear foreign config</button>
+        <button class="btn" id="setGoodBtn" type="button" title="Planner → UGood (set good force)">Mark selected UGood</button>
+        <button class="btn" id="setJbodBtn" type="button" title="Planner → JBOD so Linux sees /dev/sdX">Expose selected as JBOD</button>
+        <button class="btn" id="exposeFreeBtn" type="button" title="All UGood/UBad → JBOD">Expose all free as JBOD</button>
+      </div>
+      <div class="hint" id="createHint"></div>
+    </div>
+    <div class="btnrow" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)">
+      <button class="btn" id="rescanBtn" type="button">Rescan drives</button>
+      <button class="btn" id="refreshBtn" type="button">Reload config</button>
+    </div>
+    <p class="hint">On MegaRAID, UGood drives are held by the controller and invisible to Linux; only JBOD (or a VD) produces /dev/sdX. Use Expose as JBOD for Ceph/ZFS hosts, or Create for a RAID volume (Create plans UGood first). Plan several sized volumes in the list above to split one disk (or drive set) into multiple VDs/LDs in one Create. Use <b>Slice</b> later to carve more from free space. Smart Array unassigned drives are already OS-visible. Batch runs the same command on each selected server.</p>
+  </section>
+</div>
+
+{{template "host_partitions" .}}
+
+<section class="console">
+  <div class="head">
+    <h2>Command log</h2>
+    <form id="rawForm">
+      <input id="rawCmd" type="text" placeholder="ctrl slot=0 pd all show detail" aria-label="Raw show command">
+      <button class="btn sm" type="submit">Run show</button>
+    </form>
+  </div>
+  <div class="log" id="log" aria-live="polite"></div>
+</section>
+
+<dialog id="confirm">
+  <h3 id="cTitle"></h3>
+  <p id="cBody"></p>
+  <div class="cmdprev" id="cCmd"></div>
+  <div class="btnrow" style="margin-top:14px;justify-content:flex-end">
+    <button class="btn" id="cNo" type="button">Cancel</button>
+    <button class="btn danger" id="cYes" type="button">Confirm</button>
+  </div>
+</dialog>
+</div>
+
+<aside id="float-log" class="float-log" hidden>
+  <div class="float-log-head" id="float-log-drag" title="Drag to move">
+    <strong>Storage batch / activity</strong>
+    <div class="float-log-actions">
+      <button type="button" class="btn ghost" id="float-log-clear">Clear</button>
+      <button type="button" class="btn ghost" id="float-log-toggle">Minimize</button>
+    </div>
+  </div>
+  <p class="muted float-log-status" id="float-log-status">idle</p>
+  <div id="float-log-body" class="float-log-body" aria-live="polite"></div>
+</aside>
+
+<script>
+(function () {
+  var page = document.getElementById("storage-page");
+  if (!page) return;
+  var SERVER_IDS = [];
+  var META = [];
+  try { SERVER_IDS = JSON.parse((document.getElementById("storage-ids-json")||{}).textContent || "[]"); } catch (e) {}
+  try { META = JSON.parse((document.getElementById("storage-meta-json")||{}).textContent || "[]"); } catch (e) {}
+  // SPA fallback: /servers/{id}/storage when the JSON island was lost/rewritten.
+  if (!SERVER_IDS.length) {
+    var m = String(location.pathname || "").match(/^\/servers\/(\d+)\/storage\/?$/);
+    if (m) SERVER_IDS = [Number(m[1])];
+  }
+  if (!SERVER_IDS.length) {
+    var q = new URLSearchParams(location.search || "");
+    var rawIds = (q.get("ids") || "").split(",");
+    rawIds.forEach(function (p) {
+      var n = Number(String(p).trim());
+      if (n > 0) SERVER_IDS.push(n);
+    });
+  }
+  if (!SERVER_IDS.length) {
+    document.getElementById("ctlLine").textContent = "No server selected.";
+    return;
+  }
+  var primaryId = SERVER_IDS[0];
+  var batchMode = SERVER_IDS.length > 1;
+  var batchCompatible = !batchMode; // single server always ok; multi verified on load
+  var batchBlockedReason = "";
+  var nameById = {};
+  META.forEach(function(m){ nameById[m.id] = m.name || String(m.id); });
+
+  var cfg = null;
+  var sel = new Set();
+  var blinking = new Set();
+  var running = false;
+  // When set, Create carves another LD from an existing group/array (raid_model slice).
+  // { group, name, raid, drives, ldId }
+  var sliceTarget = null;
+  // Planned volumes for one create: [{size:"100GB"},{size:""}] — empty = all remaining (must be last).
+  var vdSizes = [""];
+
+  var floatLog = document.getElementById("float-log");
+  var floatBody = document.getElementById("float-log-body");
+  var floatStatus = document.getElementById("float-log-status");
+  var floatClear = document.getElementById("float-log-clear");
+  var floatToggle = document.getElementById("float-log-toggle");
+
+  var RAID_RULES = {
+    "0":  {min:1,  usable:function(n,s){return n*s;}, label:"RAID 0 (stripe, no redundancy)"},
+    "1":  {min:2,  max:2, usable:function(n,s){return s;}, label:"RAID 1 (mirror)"},
+    "10": {min:4,  even:true, usable:function(n,s){return n*s/2;}, label:"RAID 1+0"},
+    "5":  {min:3,  usable:function(n,s){return (n-1)*s;}, label:"RAID 5"},
+    "6":  {min:4,  usable:function(n,s){return (n-2)*s;}, label:"RAID 6 (ADG)"}
+  };
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); }
+  function clearBanner(){
+    var f=$("storage-flash"); var e=$("storage-error");
+    if(f){ f.hidden=true; f.textContent=""; }
+    if(e){ e.hidden=true; e.textContent=""; }
+  }
+  function notify(msg, isError){
+    clearBanner();
+    var el = isError ? $("storage-error") : $("storage-flash");
+    if(!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    el.scrollIntoView({block:"nearest", behavior:"smooth"});
+  }
+  function showFloat(){ if(floatLog) floatLog.hidden = false; }
+  function setFloatStatus(text, isError){
+    if(!floatStatus) return;
+    floatStatus.textContent = text;
+    floatStatus.classList.toggle("is-error", !!isError);
+  }
+  function appendLocal(msg, level){
+    showFloat();
+    if(!floatBody) return;
+    var line=document.createElement("div");
+    line.className="log-line level-"+(level||"local");
+    var t=new Date().toISOString().replace("T"," ").replace("Z","Z");
+    line.textContent=t+"  [storage]  "+msg;
+    floatBody.appendChild(line);
+    while(floatBody.childNodes.length>400) floatBody.removeChild(floatBody.firstChild);
+    floatBody.scrollTop=floatBody.scrollHeight;
+  }
+  function log(txt, cls){
+    var el=$("log"); var t=new Date().toLocaleTimeString();
+    var line=document.createElement("div"); if(cls) line.className=cls;
+    line.innerHTML=(cls==="cmd"?'<span class="ts">'+t+"</span> $ ":"")+esc(txt);
+    el.appendChild(line); el.scrollTop=el.scrollHeight;
+  }
+
+  function layoutFingerprint(c){
+    var drives=(c.drives||[]).slice().sort(function(a,b){ return String(a.addr||"").localeCompare(String(b.addr||"")); });
+    var dparts=drives.map(function(d){
+      return [d.addr||"", d.bay||0, d.size||"", Math.round(d.gb||0), d.type||""].join(":");
+    });
+    var arrays=(c.arrays||[]).slice().sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||"")); });
+    var aparts=arrays.map(function(a){
+      var ds=(a.drives||[]).slice().sort().join(",");
+      return (a.name||"")+"/"+(a.ld&&a.ld.raid||"")+"/"+ds;
+    });
+    return (c.family||"")+"|slot="+(c.slot||0)+"|"+dparts.join(";")+"|"+aparts.join(";");
+  }
+
+  function targetsLine(){
+    var parts = META.map(function(m){
+      return m.name + (m.family ? " ("+m.family+")" : "") + (m.data_ip ? " @"+m.data_ip : "");
+    });
+    var mode = "";
+    if(batchMode){
+      mode = batchCompatible
+        ? ' · <b>batch mode</b> (same controller + HDD layout)'
+        : ' · <b>batch blocked</b>';
+    }
+    $("targetsLine").innerHTML = "<b>"+SERVER_IDS.length+"</b> target"+(SERVER_IDS.length>1?"s":"")+": "+esc(parts.join(" · "))+mode;
+  }
+
+  async function waitJob(jobId){
+    // layout.html ships a stub CopperJobs; app.js replaces it when loaded.
+    function onUpdate(job){
+      if(!job) return;
+      var phase = job.phase || job.status || "";
+      var prog = job.progress || "";
+      var bit = prog || phase;
+      if(bit) setFloatStatus("job "+(job.status||"?")+(bit ? (" · "+bit) : ""), false);
+    }
+    var jobs = window.CopperJobs;
+    if(jobs && typeof jobs.pollUntilDone === "function"){
+      return jobs.pollUntilDone(jobId, 300000, onUpdate);
+    }
+    // Brief wait for deferred app.js, then fail with a clear message (should be rare).
+    for(var i = 0; i < 50; i++){
+      await new Promise(function(r){ setTimeout(r, 100); });
+      jobs = window.CopperJobs;
+      if(jobs && typeof jobs.pollUntilDone === "function"){
+        return jobs.pollUntilDone(jobId, 300000, onUpdate);
+      }
+    }
+    throw new Error("job poller unavailable — reload the page (app.js did not load)");
+  }
+
+  function jobResult(job){
+    var result = job && job.result;
+    if(typeof result === "string"){
+      try { result = JSON.parse(result); } catch(_e) {}
+    }
+    return result && typeof result === "object" ? result : {};
+  }
+
+  async function fetchConfig(id){
+    var label = nameById[id]||String(id);
+    var r = await fetch("/api/servers/"+id+"/storage/config", {credentials:"same-origin"});
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok) throw new Error(label+": "+(j.error || ("config "+r.status)));
+    if(j.job_id){
+      appendLocal(label+" — storage.config job "+j.job_id.slice(0,8)+"…", "local");
+      setFloatStatus("waiting for storage.config · "+label, false);
+      var job = await waitJob(j.job_id);
+      var result = jobResult(job);
+      var nDrives = (result.drives||[]).length;
+      var nArrays = (result.arrays||[]).length;
+      appendLocal(label+" — config ok · "+nDrives+" drives · "+nArrays+" arrays", "local");
+      return result;
+    }
+    return j;
+  }
+
+  async function loadConfig(){
+    if(!batchMode){
+      cfg = await fetchConfig(primaryId);
+      batchCompatible = true;
+      return;
+    }
+    appendLocal("loading configs for "+SERVER_IDS.length+" servers…", "local");
+    setFloatStatus("loading storage configs…", false);
+    var configs = [];
+    for(var i=0;i<SERVER_IDS.length;i++){
+      var id=SERVER_IDS[i];
+      var c = await fetchConfig(id);
+      configs.push({id:id, cfg:c, fp:layoutFingerprint(c)});
+    }
+    var base = configs[0].fp;
+    var mismatch = [];
+    for(var j=1;j<configs.length;j++){
+      if(configs[j].fp !== base){
+        mismatch.push(nameById[configs[j].id]||configs[j].id);
+      }
+    }
+    cfg = configs[0].cfg;
+    if(mismatch.length){
+      batchCompatible = false;
+      batchBlockedReason = "HDD/controller layout differs on: "+mismatch.join(", ")+". Batch RAID needs identical controller family and drive layout. Open servers one at a time, or select a matching set.";
+      setFloatStatus("batch blocked · layouts differ", true);
+      appendLocal(batchBlockedReason, "error");
+      throw new Error(batchBlockedReason);
+    }
+    batchCompatible = true;
+    batchBlockedReason = "";
+    setFloatStatus("batch ready · "+SERVER_IDS.length+" identical layouts", false);
+    appendLocal("layouts match — batch mode enabled", "local");
+  }
+
+  async function runCmdOnServer(id, args){
+    var r = await fetch("/api/servers/"+id+"/storage/exec", {
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({args: args})
+    });
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || j.ok === false){
+      return {ok:false, out:"", error:j.error||("HTTP "+r.status)};
+    }
+    if(j.job_id){
+      try {
+        var job = await waitJob(j.job_id);
+        var result = jobResult(job);
+        var out = result.output || "";
+        if(result.error){
+          return {ok:false, out:out, error:result.error};
+        }
+        return {ok:!/^Error/m.test(out), out:out, error: /^Error/m.test(out) ? "tool reported Error" : ""};
+      } catch(e) {
+        return {ok:false, out:"", error: String(e && e.message ? e.message : e)};
+      }
+    }
+    var out = j.output || "";
+    if (j.error){
+      return {ok:false, out:out, error:j.error};
+    }
+    return {ok:!/^Error/m.test(out), out:out, error: /^Error/m.test(out) ? "tool reported Error" : ""};
+  }
+
+  async function runCmd(args){
+    if(batchMode && !batchCompatible){
+      notify(batchBlockedReason || "Batch mode blocked — layouts differ", true);
+      return {ok:false, out:""};
+    }
+    log("raid "+args.join(" "), "cmd");
+    if(!batchMode){
+      appendLocal((nameById[primaryId]||primaryId)+" — "+args.join(" "), "local");
+      setFloatStatus("running on "+(nameById[primaryId]||primaryId), false);
+      try{
+        var one = await runCmdOnServer(primaryId, args);
+        if(!one.ok){
+          log(one.error||"failed", "err");
+          if(one.out) log(one.out);
+          appendLocal((nameById[primaryId]||primaryId)+" — failed: "+(one.error||"error"), "error");
+          setFloatStatus("failed", true);
+          return {ok:false, out:one.out};
+        }
+        if(one.out.trim()) log(one.out.trim());
+        appendLocal((nameById[primaryId]||primaryId)+" — ok", "local");
+        setFloatStatus("done", false);
+        return {ok:true, out:one.out};
+      }catch(e){
+        log(String(e), "err");
+        appendLocal(String(e), "error");
+        setFloatStatus("failed", true);
+        return {ok:false, out:""};
+      }
+    }
+
+    // Batch: one server at a time, float-log progress (same idea as Servers batch).
+    appendLocal("starting on "+SERVER_IDS.length+" server(s): "+args.join(" "), "local");
+    setFloatStatus("batch running 0/"+SERVER_IDS.length, false);
+    var okN=0, failN=0;
+    for(var i=0;i<SERVER_IDS.length;i++){
+      var id=SERVER_IDS[i];
+      var name=nameById[id]||String(id);
+      appendLocal(name+" — started", "local");
+      setFloatStatus("batch running "+(i+1)+"/"+SERVER_IDS.length+" · "+name, false);
+      try{
+        var res = await runCmdOnServer(id, args);
+        if(res.out && res.out.trim()) log(name+":\n"+res.out.trim());
+        if(res.ok){
+          okN++;
+          appendLocal(name+" — ok", "local");
+        } else {
+          failN++;
+          log(name+": "+(res.error||"failed"), "err");
+          appendLocal(name+" — failed: "+(res.error||"error"), "error");
+        }
+      }catch(e){
+        failN++;
+        log(name+": "+String(e), "err");
+        appendLocal(name+" — failed: "+String(e), "error");
+      }
+    }
+    appendLocal("finished: "+okN+" ok, "+failN+" failed", failN?"warn":"local");
+    setFloatStatus("batch done · "+okN+" ok · "+failN+" failed", failN>0);
+    return {ok: failN===0, out:""};
+  }
+
+  function drives(){ return cfg && cfg.drives ? cfg.drives : []; }
+  function arrays(){ return cfg && cfg.arrays ? cfg.arrays : []; }
+  function ports(){ return cfg && cfg.ports ? cfg.ports : []; }
+  function drive(addr){ return drives().find(function(d){ return d.addr===addr; }); }
+  // All virtual drives that claim this PD — MegaRAID can slice one DG into several VDs.
+  function arraysOf(addr){
+    var byMember = arrays().filter(function(a){ return (a.drives||[]).indexOf(addr)>=0; });
+    if(byMember.length) return byMember;
+    // MegaRAID: DG on the drive matches Array.dg even when member list is incomplete.
+    var d = drive(addr);
+    if(d && d.dg != null && String(d.dg) !== ""){
+      return arrays().filter(function(a){ return a.dg != null && String(a.dg) === String(d.dg); });
+    }
+    return [];
+  }
+  function arrayOf(addr){
+    var list = arraysOf(addr);
+    return list.length ? list[0] : null;
+  }
+  // Other VDs that share this array's DG or any member drive (sliced MegaRAID layout).
+  function slicedSiblings(a){
+    if(!a) return [];
+    var out = [];
+    arrays().forEach(function(o){
+      if(o === a) return;
+      if(a.ld && o.ld && a.ld.id === o.ld.id) return;
+      var sameDG = a.dg != null && String(a.dg) !== "" && o.dg != null && String(o.dg) === String(a.dg);
+      var share = false;
+      if(!sameDG){
+        var ad = a.drives || [], od = o.drives || [];
+        for(var i=0;i<ad.length;i++){
+          if(od.indexOf(ad[i]) >= 0){ share = true; break; }
+        }
+      }
+      if(sameDG || share) out.push(o);
+    });
+    return out;
+  }
+  function arrayNamesLabel(list){
+    return (list||[]).map(function(a){ return a.name; }).filter(Boolean).join(", ");
+  }
+  function shortDev(path){
+    path = String(path||"").trim();
+    if(!path) return "";
+    var i = path.lastIndexOf("/");
+    return i >= 0 ? path.slice(i+1) : path;
+  }
+  // Shared role for MegaRAID + Smart Array. Tags what the admin can do next.
+  // UGood = free to the controller but invisible to Linux; JBOD/OS = /dev/sdX exists.
+  function driveRole(d){
+    if(!d) return {cls:"free", label:"?", kind:"other", pickable:false, os:false, arrays:[], title:""};
+    var arrs = arraysOf(d.addr);
+    var st = String(d.status||"").trim();
+    var stU = st.toUpperCase();
+    if(arrs.length){
+      var names = arrayNamesLabel(arrs);
+      var dgBit = (d.dg != null && String(d.dg) !== "") ? ("DG "+d.dg+" · ") : "";
+      if(arrs.length === 1){
+        return {
+          cls:"arr", label:"Array "+arrs[0].name, kind:"array", pickable:false, os:false,
+          arrays:arrs, sliced:false,
+          title: dgBit+"Array "+arrs[0].name+(arrs[0].ld ? (" · LD "+arrs[0].ld.id) : "")
+        };
+      }
+      // Sliced DG: keep the bay tag short; full VD list is in title + array cards.
+      var shortNames = arrs.map(function(a){ return a.name; }).join("+");
+      var label = shortNames.length <= 16 ? shortNames : (arrs.length+" VDs");
+      return {
+        cls:"arr sliced", label:label, kind:"array", pickable:false, os:false,
+        arrays:arrs, sliced:true,
+        title: dgBit+"sliced · "+arrs.length+" VDs: "+names
+      };
+    }
+    if(stU === "JBOD"){
+      return {cls:"jbod", label: d.disk ? ("JBOD · "+shortDev(d.disk)) : "JBOD", kind:"jbod", pickable:true, os:true, arrays:[], title:""};
+    }
+    if(stU === "UGOOD"){
+      return {cls:"ugood", label:"UGood", kind:"ugood", pickable:true, os:false, arrays:[], title:""};
+    }
+    if(stU === "UBAD" || /UNSP|SHLD/i.test(st)){
+      return {cls:"bad", label: st || "UBad", kind:"bad", pickable:true, os:false, arrays:[], title:""};
+    }
+    if(stU === "GHS" || stU === "DHS"){
+      return {cls:"spare", label:"spare", kind:"spare", pickable:false, os:false, arrays:[], title:""};
+    }
+    if(/^(ONLN|OFFLN|RBLD|CPYBCK)$/i.test(st)){
+      // Should normally be caught by arraysOf; keep a clear array-style tag.
+      var dg = d.dg != null && String(d.dg) !== "" ? ("DG "+d.dg) : st;
+      return {cls:"arr", label: dg, kind:"member", pickable:false, os:false, arrays:[], title:dg};
+    }
+    if(/^(SNTZE|ERASE|PREPRMV)$/i.test(st)){
+      return {cls:"busy", label: st, kind:"busy", pickable:false, os:false, arrays:[], title:""};
+    }
+    // Smart Array (and generic): unassigned with an OS path is already "raw"/visible.
+    if(d.disk){
+      return {cls:"jbod", label: shortDev(d.disk), kind:"os", pickable:true, os:true, arrays:[], title:""};
+    }
+    if(/^OK$/i.test(st) || st === ""){
+      return {cls:"free", label:"free", kind:"free", pickable:true, os:false, arrays:[], title:""};
+    }
+    return {cls:"free", label: st, kind:"other", pickable:true, os:!!d.disk, arrays:[], title:""};
+  }
+  function anySlicedDG(){
+    var seen = Object.create(null), sliced = false;
+    arrays().forEach(function(a){
+      if(a.dg == null || String(a.dg) === "") return;
+      var k = String(a.dg);
+      if(seen[k]) sliced = true;
+      else seen[k] = true;
+    });
+    if(sliced) return true;
+    return drives().some(function(d){ return arraysOf(d.addr).length > 1; });
+  }
+  function driveByOSPath(path){
+    path = String(path||"").trim();
+    if(!path) return null;
+    return drives().find(function(d){
+      return d.disk && String(d.disk).trim() === path;
+    }) || null;
+  }
+  // MegaRAID VDs / Smart Array LDs bind to array.ld.disk, not physical drive.disk.
+  function arrayByOSPath(path){
+    path = String(path||"").trim();
+    if(!path) return null;
+    return arrays().find(function(a){
+      return a.ld && a.ld.disk && String(a.ld.disk).trim() === path;
+    }) || null;
+  }
+  function roleSummary(){
+    var counts = {jbod:0, ugood:0, free:0, array:0, bad:0, spare:0, other:0};
+    drives().forEach(function(d){
+      var r = driveRole(d);
+      if(r.kind === "array" || r.kind === "member") counts.array++;
+      else if(r.kind === "jbod" || r.kind === "os") counts.jbod++;
+      else if(r.kind === "ugood") counts.ugood++;
+      else if(r.kind === "bad") counts.bad++;
+      else if(r.kind === "spare") counts.spare++;
+      else if(r.kind === "free") counts.free++;
+      else counts.other++;
+    });
+    return counts;
+  }
+
+  function setChassisVisible(on){
+    var ch=$("chassis"); var grid=$("storageGrid"); var load=$("chassisLoading");
+    if(ch) ch.hidden=!on;
+    if(grid) grid.hidden=!on;
+    if(load) load.hidden=!!on;
+  }
+  function clearChassis(){
+    cfg=null; sel.clear(); blinking.clear(); sliceTarget=null; vdSizes=[""];
+    var vp=$("vdPlan"); if(vp){ vp.dataset.bound="0"; vp.innerHTML=""; }
+    var b=$("bays"); if(b) b.innerHTML="";
+    var a=$("arrays"); if(a) a.innerHTML="";
+    setChassisVisible(false);
+    var load=$("chassisLoading");
+    if(load) load.textContent="Loading live controller config over SSH…";
+  }
+  function render(){
+    if(!cfg){ clearChassis(); return; }
+    setChassisVisible(true);
+    $("ctlLine").innerHTML = "<b>"+esc(cfg.model||"?")+"</b> · "+esc(cfg.family||"?")+" · slot "+cfg.slot+", sn "+esc(cfg.serial||"—")+", "+esc(cfg.status||"");
+    $("modeLine").textContent = "Controller mode: "+(cfg.mode||"—");
+    renderBays(); renderArrays(); renderActions();
+  }
+  function renderBays(){
+    var el=$("bays"); el.innerHTML="";
+    ports().forEach(function(p){
+      var port=document.createElement("div"); port.className="port"; port.dataset.port="Port "+p.name;
+      (p.bays||[]).forEach(function(bay){
+        var d=drives().find(function(x){ return x.bay===bay; });
+        var b=document.createElement("button"); b.className="bay"; b.type="button";
+        if(!d){ b.classList.add("empty"); b.disabled=true; b.innerHTML='<span class="num">bay '+bay+'</span><span class="kind">empty</span>'; port.appendChild(b); return; }
+        var role=driveRole(d);
+        var ledc = role.cls==="bad" ? "bad"
+          : role.cls==="busy" || /predictive|Pred/i.test(d.status||"") ? "warn"
+          : "ok";
+        if(sel.has(d.addr)) b.classList.add("sel");
+        if(role.kind==="ugood") b.classList.add("held");
+        if(role.os) b.classList.add("osvis");
+        var kindBits=[d.type||""];
+        if(role.sliced) kindBits.push((role.arrays||[]).length+" VDs");
+        if(d.disk) kindBits.push(d.disk);
+        else if(role.kind==="ugood") kindBits.push("not in lsblk");
+        if(role.title) b.title = role.title;
+        b.innerHTML='<span class="led '+ledc+(blinking.has(d.addr)?" blink":"")+'"></span>'+
+          '<span class="num">bay '+bay+' <span class="mono">'+esc(d.addr)+'</span></span>'+
+          '<span class="cap">'+esc(d.size)+'</span>'+
+          '<span class="kind">'+esc(kindBits.filter(Boolean).join(" · "))+'</span>'+
+          '<span class="tag '+role.cls+'">'+esc(role.label)+'</span>';
+        b.addEventListener("click", function(){
+          if(!role.pickable){
+            if(role.kind==="array" || role.kind==="member"){
+              var arrs = role.arrays && role.arrays.length ? role.arrays : arraysOf(d.addr);
+              if(arrs.length){
+                highlightArrays(arrs.map(function(a){ return a.ld && a.ld.id; }));
+                if(arrs.length > 1){
+                  var bits = arrs.map(function(a){
+                    return "Array "+a.name+(a.ld ? (" LD "+a.ld.id+(a.ld.disk?" → "+a.ld.disk:"")) : "");
+                  });
+                  var dg = (d.dg != null && String(d.dg) !== "") ? ("DG "+d.dg) : "same DG";
+                  notify("Bay "+bay+" is sliced ("+dg+"): "+bits.join(" · ")+". Delete each VD below to free the drive, or Slice to add another.", true);
+                } else {
+                  var arr = arrs[0];
+                  notify("Bay "+bay+" is in Array "+arr.name+(arr.ld ? (" (LD "+arr.ld.id+")") : "")+". Use Delete to free it, or Slice to carve another LD from free space.", true);
+                }
+              } else {
+                notify("Bay "+bay+" is in a virtual drive ("+role.label+"). Use Delete or Slice on the matching array below.", true);
+                var panel=$("arrays"); if(panel) panel.scrollIntoView({behavior:"smooth", block:"nearest"});
+              }
+            } else if(role.kind==="spare"){
+              notify("Bay "+bay+" is a hot spare.", true);
+            } else {
+              notify("Bay "+bay+" is "+role.label+" and cannot be selected.", true);
+            }
+            return;
+          }
+          clearBanner();
+          if(sel.has(d.addr)) sel.delete(d.addr); else sel.add(d.addr);
+          if(sel.size) sliceTarget=null;
+          render();
+        });
+        port.appendChild(b);
+      });
+      el.appendChild(port);
+    });
+    var n=sel.size;
+    var c=roleSummary();
+    var parts=[];
+    if(n) parts.push(n+" selected");
+    else {
+      if(c.jbod) parts.push(c.jbod+" JBOD/OS");
+      if(c.ugood) parts.push(c.ugood+" UGood");
+      if(c.free) parts.push(c.free+" free");
+      if(c.bad) parts.push(c.bad+" bad");
+      if(c.spare) parts.push(c.spare+" spare");
+      parts.push(c.array+" in arrays");
+    }
+    $("selCount").textContent = parts.join(", ");
+    var leg=$("bayLegend");
+    if(leg){
+      leg.hidden = !(c.ugood || c.jbod || isMegaRAID());
+      var slicedLeg = leg.querySelector(".l-sliced");
+      if(slicedLeg) slicedLeg.hidden = !anySlicedDG();
+    }
+  }
+  function highlightArray(ldId){
+    highlightArrays([ldId]);
+  }
+  function highlightArrays(ldIds){
+    var el=$("arrays"); if(!el) return;
+    el.querySelectorAll(".array.hl").forEach(function(n){ n.classList.remove("hl"); });
+    var ids = (ldIds||[]).filter(function(id){ return id != null && id !== ""; });
+    if(!ids.length){ el.scrollIntoView({behavior:"smooth", block:"nearest"}); return; }
+    var first=null;
+    ids.forEach(function(ldId){
+      var card=el.querySelector('.array[data-ld="'+ldId+'"]');
+      if(!card) return;
+      card.classList.add("hl");
+      if(!first) first=card;
+    });
+    if(!first){ el.scrollIntoView({behavior:"smooth", block:"nearest"}); return; }
+    first.scrollIntoView({behavior:"smooth", block:"nearest"});
+    var btn=first.querySelector("[data-del-ld]");
+    if(btn){ btn.focus(); }
+  }
+  function renderArrays(){
+    var el=$("arrays");
+    if(!arrays().length){
+      var c=roleSummary();
+      var msg="No arrays yet.";
+      if(c.array) msg="Controller reports "+c.array+" drive(s) in a virtual drive, but the VD list did not load. Reload config; if this persists, check storcli /cN/vall show on the host.";
+      else if(c.ugood && c.jbod) msg+=" "+c.jbod+" OS-visible (JBOD), "+c.ugood+" UGood (held by controller — use Expose as JBOD to see them in lsblk, or Create for RAID).";
+      else if(c.ugood) msg+=" "+c.ugood+" drive(s) are UGood: free to the controller but invisible to Linux until exposed as JBOD or put in a VD.";
+      else if(c.jbod) msg+=" "+c.jbod+" drive(s) are OS-visible. Select bays to build a RAID volume, or leave them for Ceph/ZFS.";
+      else msg+=" Select bays above to build one.";
+      el.innerHTML='<div class="empty">'+esc(msg)+'</div>';
+      return;
+    }
+    el.innerHTML = arrays().map(function(a){
+      var chips=(a.drives||[]).map(function(x){
+        var d=drive(x); var bay=d&&d.bay!=null?("bay "+d.bay+" · "):"";
+        return '<span class="chip">'+esc(bay+x)+'</span>';
+      }).join("");
+      if(!chips) chips='<span class="sub">members unknown</span>';
+      var sibs = slicedSiblings(a);
+      var sliceNote = "";
+      if(sibs.length){
+        var dgLabel = (a.dg != null && String(a.dg) !== "") ? ("DG "+a.dg) : "shared drives";
+        var also = sibs.map(function(s){
+          return "Array "+s.name+(s.ld ? (" (LD "+s.ld.id+(s.ld.disk?" · "+s.ld.disk:"")+")") : "");
+        }).join(", ");
+        sliceNote = '<div class="slice-note" title="MegaRAID sliced virtual drives on one drive group">Sliced '+esc(dgLabel)+' · also '+esc(also)+'</div>';
+      }
+      var sliceHl = sliceTarget && String(sliceTarget.ldId)===String(a.ld.id) ? " hl" : "";
+      var volKind = isMegaRAID() ? "virtual drive" : "logical drive";
+      return '<div class="array'+sliceHl+'" data-ld="'+a.ld.id+'"><div class="row"><span class="name">Array '+esc(a.name)+'</span>'+
+        '<span class="meta">'+volKind+' '+a.ld.id+(a.dg!=null && String(a.dg)!=="" ? ', DG '+esc(String(a.dg)) : '')+', RAID '+esc(a.ld.raid)+', '+esc(a.ld.size)+', '+esc(a.ld.status)+
+        (a.ld.disk?', <code>'+esc(a.ld.disk)+'</code>':'<span class="muted"> · no /dev yet</span>')+'</span>'+
+        '<span class="acts"><button class="btn sm" type="button" data-slice-ld="'+a.ld.id+'" title="Carve another logical drive from this array&apos;s free space">Slice</button>'+
+        '<button class="btn sm" type="button" data-blink-ld="'+a.ld.id+'">Blink</button>'+
+        '<button class="btn sm danger" type="button" data-del-ld="'+a.ld.id+'">Delete</button></span></div>'+
+        '<div class="drivelist">'+chips+'</div>'+sliceNote+'</div>';
+    }).join("");
+    el.querySelectorAll("[data-del-ld]").forEach(function(b){ b.addEventListener("click", function(){ deleteLd(+b.dataset.delLd); }); });
+    el.querySelectorAll("[data-blink-ld]").forEach(function(b){ b.addEventListener("click", function(){ blinkLd(+b.dataset.blinkLd); }); });
+    el.querySelectorAll("[data-slice-ld]").forEach(function(b){ b.addEventListener("click", function(){ beginSlice(+b.dataset.sliceLd); }); });
+  }
+  function sliceGroupId(a){
+    if(!a) return "";
+    // MegaRAID: drive-group id; Smart Array: array letter name.
+    if(isMegaRAID() && a.dg != null && String(a.dg) !== "") return String(a.dg);
+    return String(a.name||"");
+  }
+  function beginSlice(ldId){
+    var a=arrays().find(function(x){ return x.ld.id===ldId; });
+    if(!a){ notify("Array not found", true); return; }
+    var group=sliceGroupId(a);
+    if(!group){ notify("Cannot slice: array has no group id", true); return; }
+    sel.clear();
+    sliceTarget={
+      group: group,
+      name: a.name,
+      raid: String(a.ld.raid||""),
+      drives: (a.drives||[]).slice(),
+      ldId: a.ld.id
+    };
+    clearBanner();
+    render();
+    var form=$("createForm");
+    if(form) form.scrollIntoView({behavior:"smooth", block:"nearest"});
+    notify("Slicing Array "+a.name+" — set size (optional) and Create logical drive");
+  }
+  function renderActions(){
+    var list=Array.from(sel); var n=list.length;
+    var slicing=!!sliceTarget && n===0;
+    var driveCount = slicing ? (sliceTarget.drives||[]).length : n;
+    var raidSel=$("raid"); var prev=raidSel.value; raidSel.innerHTML="";
+    var lockRaid = slicing && isMegaRAID() ? String(sliceTarget.raid||"") : "";
+    Object.keys(RAID_RULES).forEach(function(k){
+      var r=RAID_RULES[k];
+      var ok=driveCount>=r.min && (!r.max||driveCount<=r.max) && (!r.even||driveCount%2===0);
+      if(lockRaid && k!==lockRaid) ok=false;
+      var o=document.createElement("option"); o.value=k; o.textContent=r.label+(ok?"":"  (needs "+r.min+(r.max?"":"+")+(r.even?", even":"")+")"); o.disabled=!ok;
+      raidSel.appendChild(o);
+    });
+    var prefer = lockRaid || prev;
+    var firstOk=Array.prototype.find.call(raidSel.options, function(o){ return !o.disabled; });
+    raidSel.value = Array.prototype.some.call(raidSel.options, function(o){ return o.value===prefer&&!o.disabled; }) ? prefer : (firstOk?firstOk.value:"");
+    raidSel.disabled = !!(lockRaid && raidSel.value===lockRaid);
+    var hint=$("createHint"); hint.className="hint";
+    var mega = isMegaRAID();
+    var megaRow=$("megaPrepRow");
+    if(megaRow) megaRow.hidden = !mega;
+    if($("setGoodBtn")) $("setGoodBtn").disabled = !n || (batchMode && !batchCompatible);
+    if($("setJbodBtn")) $("setJbodBtn").disabled = !n || (batchMode && !batchCompatible);
+    if($("exposeFreeBtn")) $("exposeFreeBtn").disabled = batchMode && !batchCompatible;
+    if($("foreignDelBtn")) $("foreignDelBtn").disabled = batchMode && !batchCompatible;
+    $("blinkBtn").disabled = !n;
+    if(!n && !slicing){
+      $("selbox").innerHTML='<span class="sub">Nothing selected. Click bays in the chassis, or Slice on an array.</span>';
+      $("createBtn").disabled=true; $("cmdprev").textContent="";
+      hint.textContent= mega ? "MegaRAID: select bays, Slice an array for another VD, or clear foreign config without a selection." : "Select bays to create, or Slice an array for another logical drive.";
+      return;
+    }
+    if(slicing){
+      var members=(sliceTarget.drives||[]).join(", ")||"members unknown";
+      $("selbox").innerHTML='<span class="n">Slice Array '+esc(sliceTarget.name)+'</span> <span class="mono">group '+esc(sliceTarget.group)+'</span><br><span class="sub">Reuse drives '+esc(members)+(mega?' · RAID level locked to group':" · RAID level may differ per LD")+'</span>';
+    } else {
+      var sizes=Array.from(new Set(list.map(function(a){ return drive(a).size; })));
+      var types=Array.from(new Set(list.map(function(a){ return drive(a).type; })));
+      var roles=Array.from(new Set(list.map(function(a){ return driveRole(drive(a)).label; })));
+      $("selbox").innerHTML='<span class="n">'+n+" drive"+(n>1?"s":"")+'</span> <span class="mono">'+esc(list.join(", "))+'</span><br><span class="sub">'+esc(roles.join(" · "))+" · "+esc(types.join(" + "))+", "+esc(sizes.join(" + "))+"</span>";
+    }
+    renderVdPlan();
+    var raid=raidSel.value;
+    if(!raid){ $("createBtn").disabled=true; $("cmdprev").textContent=""; hint.textContent="No RAID level fits this many drives."; return; }
+    var plan=collectVdPlan();
+    if(plan.error){ $("createBtn").disabled=true; $("cmdprev").textContent=""; hint.classList.add("warn"); hint.textContent=plan.error; return; }
+    $("createBtn").disabled=false;
+    $("cmdprev").textContent=previewCreatePlan(plan.tokens)+(batchMode&&batchCompatible?"  ×"+SERVER_IDS.length:"");
+    var msg="";
+    var nVol=plan.tokens.length;
+    if(slicing){
+      msg="Carves "+nVol+" logical drive"+(nVol>1?"s":"")+" from Array "+sliceTarget.name+" free space.";
+      if(mega) msg+=" MegaRAID: same RAID level as the drive group.";
+      else msg+=" Smart Array: RAID level from the selector applies to each new LD.";
+    } else {
+      var r=RAID_RULES[raid]; var minGb=Math.min.apply(null, list.map(function(a){ return drive(a).gb; })); var u=r.usable(n,minGb);
+      msg="Usable capacity about "+(u>=1000?(u/1000).toFixed(1)+" TB":u+" GB")+".";
+      if(nVol>1) msg+=" Will create "+nVol+" volumes on one group (first from drives, then slice free space).";
+      else if(plan.tokens[0]) msg+=" First volume "+plan.tokens[0]+" MB; remainder stays free for Slice / Add volume.";
+      if(mega) msg+=" Create plans via storcli JSON: clears foreign if DG=F, recovers UBad/JBOD to UGood, rejects attribute mismatches. Mode "+(cfg.mode||"?")+".";
+      var sizes2=Array.from(new Set(list.map(function(a){ return drive(a).size; })));
+      var types2=Array.from(new Set(list.map(function(a){ return drive(a).type; })));
+      if(sizes2.length>1||types2.length>1){ hint.classList.add("warn"); msg+=" Mixed sizes or media types."; }
+    }
+    if(batchMode&&batchCompatible) msg+=" Batch: same command on "+SERVER_IDS.length+" servers.";
+    if(batchMode&&!batchCompatible){ hint.classList.add("warn"); $("createBtn").disabled=true; $("blinkBtn").disabled=true; if($("setGoodBtn")) $("setGoodBtn").disabled=true; if($("setJbodBtn")) $("setJbodBtn").disabled=true; if($("exposeFreeBtn")) $("exposeFreeBtn").disabled=true; if($("foreignDelBtn")) $("foreignDelBtn").disabled=true; msg=batchBlockedReason||"Batch blocked."; }
+    hint.textContent=msg;
+  }
+  function isMegaRAID(){ return cfg && cfg.family === "megaraid"; }
+  function isSmartArray(){ return cfg && cfg.family === "smartarray"; }
+  function renderVdPlan(force){
+    var el=$("vdPlan"); if(!el) return;
+    if(!vdSizes.length) vdSizes=[""];
+    // Avoid rebuilding inputs on every keystroke (keeps caret / focus).
+    if(!force && el.querySelectorAll(".vd-row").length===vdSizes.length && el.dataset.bound==="1"){
+      el.querySelectorAll("input[data-vd-i]").forEach(function(inp){
+        var i=+inp.getAttribute("data-vd-i");
+        var ph = (i===vdSizes.length-1) ? "all remaining" : "e.g. 100GB";
+        inp.placeholder=ph;
+        if(document.activeElement!==inp && inp.value!==vdSizes[i]) inp.value=vdSizes[i];
+      });
+      return;
+    }
+    el.innerHTML = vdSizes.map(function(sz, i){
+      var ph = (i===vdSizes.length-1) ? "all remaining" : "e.g. 100GB";
+      var rm = vdSizes.length>1
+        ? '<button type="button" class="btn sm" data-vd-rm="'+i+'" title="Remove this volume">Remove</button>'
+        : "";
+      return '<div class="vd-row">'+
+        '<span class="vd-idx">#'+(i+1)+'</span>'+
+        '<input type="text" inputmode="numeric" data-vd-i="'+i+'" value="'+esc(sz)+'" placeholder="'+ph+'" autocomplete="off" spellcheck="false" title="MB number or GB/TB suffix. Leave the last row empty for all remaining free space.">'+
+        rm+'</div>';
+    }).join("");
+    el.dataset.bound="1";
+    el.querySelectorAll("input[data-vd-i]").forEach(function(inp){
+      inp.addEventListener("input", function(){
+        var i=+inp.getAttribute("data-vd-i");
+        vdSizes[i]=inp.value;
+        renderActions();
+      });
+    });
+    el.querySelectorAll("[data-vd-rm]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var i=+b.getAttribute("data-vd-rm");
+        vdSizes.splice(i,1);
+        if(!vdSizes.length) vdSizes=[""];
+        el.dataset.bound="0";
+        renderVdPlan(true);
+        renderActions();
+      });
+    });
+  }
+  // Returns { token: "102400"|"" for size= arg, error: string|null }. Empty input → all remaining.
+  function parseVolumeSizeArg(raw){
+    var s=String(raw||"").trim();
+    if(!s) return {token:"", error:null};
+    if(/^(all|max)$/i.test(s)) return {token:"", error:null};
+    var m=s.match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB|T|G|M)?$/i);
+    if(!m) return {token:"", error:"Volume size: use a number (MB) or suffix GB/TB, or leave empty for all remaining."};
+    var n=parseFloat(m[1]);
+    if(!(n>0)) return {token:"", error:"Volume size must be greater than zero."};
+    var unit=(m[2]||"MB").toUpperCase();
+    var mb;
+    if(unit==="TB"||unit==="T") mb=Math.round(n*1024*1024);
+    else if(unit==="GB"||unit==="G") mb=Math.round(n*1024);
+    else mb=Math.round(n);
+    if(!(mb>0)) return {token:"", error:"Volume size too small."};
+    return {token:String(mb), error:null};
+  }
+  function collectVdPlan(){
+    var tokens=[], error=null;
+    for(var i=0;i<vdSizes.length;i++){
+      var p=parseVolumeSizeArg(vdSizes[i]);
+      if(p.error){ error=p.error+" (volume #"+(i+1)+")"; break; }
+      if(!p.token && i!==vdSizes.length-1){
+        error="Only the last volume may be “all remaining”; give volume #"+(i+1)+" an explicit size.";
+        break;
+      }
+      tokens.push(p.token);
+    }
+    if(!error && tokens.length>1){
+      var empties=tokens.filter(function(t){ return !t; }).length;
+      if(empties>1) error="At most one volume may use all remaining free space.";
+    }
+    return {tokens:tokens, error:error};
+  }
+  function createArgsAt(sizeToken, opts){
+    opts = opts || {};
+    var a=["ctrl","slot="+cfg.slot];
+    var slicing=!!sliceTarget && sel.size===0;
+    var group = opts.group || (slicing ? String(sliceTarget.group) : "");
+    if(group && (slicing || opts.slice)){
+      a.push("array", group, "create", "type=ld", "raid="+$("raid").value);
+    } else {
+      a.push("create","type=ld","drives="+(opts.drives||Array.from(sel).join(",")),"raid="+$("raid").value);
+    }
+    if($("ss").value) a.push("ss="+$("ss").value);
+    if(sizeToken) a.push("size="+sizeToken);
+    a.push("forced");
+    return a;
+  }
+  function createArgs(){
+    var plan=collectVdPlan();
+    return createArgsAt(plan.tokens[0]||"", {});
+  }
+  function previewCreatePlan(tokens){
+    var lines=[], drives=Array.from(sel), slicing=!!sliceTarget && !drives.length;
+    var groupHint = slicing ? String(sliceTarget.group) : (isMegaRAID() ? "<new-DG>" : "<new-array>");
+    tokens.forEach(function(tok, i){
+      var args;
+      if(i===0 && !slicing){
+        args=createArgsAt(tok, {drives:drives.join(",")});
+      } else {
+        args=createArgsAt(tok, {slice:true, group: slicing ? String(sliceTarget.group) : groupHint});
+      }
+      lines.push("# volume #"+(i+1)+(tok?(" · "+tok+" MB"):" · all remaining"));
+      lines.push(previewCmd(args));
+    });
+    return lines.join("\n");
+  }
+  function findGroupForMembers(memberAddrs){
+    var want=(memberAddrs||[]).slice().sort();
+    if(!want.length) return "";
+    var best="", bestScore=-1;
+    arrays().forEach(function(a){
+      var have=(a.drives||[]).slice().sort();
+      var hit=0;
+      want.forEach(function(w){ if(have.indexOf(w)>=0) hit++; });
+      if(hit===want.length && hit>=bestScore){
+        bestScore=hit;
+        best=sliceGroupId(a);
+      }
+    });
+    return best;
+  }
+  // Console always posts a shared allowlist dialect; MegaRAID translates server-side.
+  // Preview what will actually run on the host for the detected family.
+  function previewCmd(args){
+    var fam = (cfg && cfg.family) || "";
+    var tool = (cfg && cfg.tool) || (fam === "megaraid" ? "storcli" : "ssacli");
+    if(fam === "megaraid"){
+      return previewStorcliLines(tool, args).join("\n");
+    }
+    return tool+" "+args.join(" ");
+  }
+  function previewStorcliLines(tool, args){
+    var joined = args.join(" ");
+    var slot = 0;
+    args.forEach(function(a){ if(/^slot=/.test(a)) slot = +a.slice(5) || 0; });
+    if(/\bforeign delete\b/.test(joined)){
+      return [tool+" /c"+slot+"/fall del"];
+    }
+    if(/\bexpose free\b/.test(joined)){
+      return ["# planner: every UGood/UBad → JBOD (ctrl jbod/autoconfig/personality as needed)", tool+" /c"+slot+"/e?/s? set jbod"];
+    }
+    if(/\bset good\b/.test(joined)){
+      var pd="";
+      for(var i=0;i<args.length;i++){ if(args[i]==="pd" && args[i+1]){ pd=args[i+1]; break; } }
+      return ["# planner → UGood (foreign clear / set good as needed)"].concat(previewDriveCmds(tool, slot, pd, "set good force"));
+    }
+    if(/\bset jbod\b/.test(joined)){
+      var pdj="";
+      for(var ij=0;ij<args.length;ij++){ if(args[ij]==="pd" && args[ij+1]){ pdj=args[ij+1]; break; } }
+      return ["# planner → JBOD (enable ctrl passthrough + per-drive set jbod)"].concat(previewDriveCmds(tool, slot, pdj, "set jbod"));
+    }
+    if(/\bmodify jbod=/.test(joined)){
+      return [tool+" /c"+slot+" set jbod="+(/\bjbod=on\b/.test(joined)?"on":"off")];
+    }
+    if(/\bmodify autoconfig=/.test(joined)){
+      return [tool+" /c"+slot+" set autoconfig="+(/\bautoconfig=jbod\b/.test(joined)?"JBOD":"None")];
+    }
+    if(/\bmodify personality=/.test(joined)){
+      var pers="RAID";
+      if(/\bpersonality=jbod\b/.test(joined)) pers="JBOD";
+      else if(/\bpersonality=hba\b/.test(joined)) pers="HBA";
+      return [tool+" /c"+slot+" set personality="+pers, "# reboot required before per-drive JBOD"];
+    }
+    if(/\bcreate type=ld\b/.test(joined)){
+      var drives="", raid="", ss="", size="", group="";
+      for(var ci=0;ci<args.length;ci++){
+        var a=args[ci];
+        if(a.indexOf("drives=")===0) drives=a.slice(7);
+        else if(a.indexOf("raid=")===0) raid=a.slice(5);
+        else if(a.indexOf("ss=")===0) ss=a.slice(3);
+        else if(a.indexOf("size=")===0) size=a.slice(5);
+        else if(a==="array" && args[ci+1]) group=String(args[ci+1]);
+      }
+      if(group && !drives && sliceTarget && String(sliceTarget.group)===group){
+        drives=(sliceTarget.drives||[]).join(",");
+      }
+      var sizeTok = size ? ("size="+size+"MB") : "size=all";
+      var create = tool+" /c"+slot+" add vd type=raid"+raid+" "+sizeTok+(drives?(" drives="+drives):"");
+      if(ss) create += " strip="+ss;
+      create += " force";
+      if(group) return ["# slice group "+group+" (raidstate CreateVolume):", create];
+      return ["# planner → UGood then (raidstate CreateVolume):", create];
+    }
+    if(joined === "rescan") return [tool+" /c"+slot+" show"];
+    if(/\bld \d+ delete forced\b/.test(joined)){
+      var id="";
+      for(var k=0;k<args.length;k++){ if(args[k]==="ld" && args[k+1]){ id=args[k+1]; break; } }
+      return [tool+" /c"+slot+"/v"+id+" del force"];
+    }
+    if(/\bmodify led=/.test(joined)){
+      var on = /led=on/.test(joined);
+      var action = on ? "start" : "stop";
+      for(var j=0;j<args.length;j++){
+        if(args[j]==="pd" && args[j+1]){
+          var es=String(args[j+1]).split(":");
+          return [tool+" /c"+slot+"/e"+es[0]+"/s"+(es[1]||"")+" "+action+" locate"];
+        }
+        if(args[j]==="ld" && args[j+1]) return [tool+" /c"+slot+"/v"+args[j+1]+" "+action+" locate"];
+      }
+    }
+    return [tool+" "+args.join(" ")];
+  }
+  function previewDriveCmds(tool, slot, drivesCSV, suffix){
+    var byEnc = {};
+    String(drivesCSV||"").split(",").forEach(function(p){
+      p = String(p||"").trim();
+      if(!p) return;
+      var parts = p.split(":");
+      if(parts.length!==2) return;
+      var e = parts[0], s = +parts[1];
+      if(!byEnc[e]) byEnc[e]=[];
+      if(byEnc[e].indexOf(s)<0) byEnc[e].push(s);
+    });
+    var lines=[];
+    Object.keys(byEnc).forEach(function(e){
+      var slots = byEnc[e].slice().sort(function(a,b){ return a-b; });
+      var i=0;
+      while(i<slots.length){
+        var start=slots[i], end=start;
+        while(i+1<slots.length && slots[i+1]===end+1){ i++; end=slots[i]; }
+        var path = end===start ? "/c"+slot+"/e"+e+"/s"+start : "/c"+slot+"/e"+e+"/s"+start+"-"+end;
+        lines.push(tool+" "+path+" "+suffix);
+        i++;
+      }
+    });
+    return lines.length ? lines : [tool+" /c"+slot+"/e?/s? "+suffix];
+  }
+  function confirmDlg(title, body, cmd){
+    return new Promise(function(res){
+      $("cTitle").textContent=title; $("cBody").textContent=body; $("cCmd").textContent=cmd;
+      var d=$("confirm"); d.showModal();
+      function done(v){ d.close(); $("cYes").onclick=$("cNo").onclick=null; res(v); }
+      $("cYes").onclick=function(){ done(true); }; $("cNo").onclick=function(){ done(false); };
+      d.oncancel=function(){ done(false); };
+    });
+  }
+  async function confirmLayoutChange(title, body, cmd){
+    var ok = await confirmDlg(title, body, cmd);
+    if(!ok) return false;
+    var installed = window.CopperInstalled
+      ? window.CopperInstalled.installedNamesFromMeta(META)
+      : [];
+    if(window.CopperInstalled && !window.CopperInstalled.confirmDestructive(installed, title)) return false;
+    return true;
+  }
+  (function showInstalledBanner(){
+    var el = document.getElementById("installedCaution");
+    if(!el || !window.CopperInstalled) return;
+    var names = window.CopperInstalled.installedNamesFromMeta(META);
+    if(!names.length){ el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = "CAUTION: labeled \"installed\" — " + names.join(", ") +
+      ". Changing RAID layout or wiping disks can destroy a provisioned OS.";
+  })();
+  async function withRun(label, fn){
+    if(running) return;
+    if(batchMode && !batchCompatible){
+      notify(batchBlockedReason || "Batch mode blocked — layouts differ", true);
+      return;
+    }
+    running = true;
+    clearBanner();
+    showFloat();
+    setFloatStatus(label, false);
+    try{ await fn(); }
+    finally { running = false; }
+  }
+
+  async function createLd(){
+    var plan=collectVdPlan();
+    if(plan.error){ notify(plan.error, true); return; }
+    var tokens=plan.tokens;
+    var slicing=!!sliceTarget && sel.size===0;
+    var drives=Array.from(sel);
+    var body;
+    if(slicing){
+      body = "Carves "+tokens.length+" RAID "+$("raid").value+" logical drive(s) from Array "+sliceTarget.name+" (group "+sliceTarget.group+") on "+SERVER_IDS.length+" server(s). Existing volumes on that group are kept.";
+    } else {
+      body = "Builds RAID "+$("raid").value+" from "+drives.length+" drive(s) on "+SERVER_IDS.length+" server(s), as "+tokens.length+" volume(s). Data on those disks is lost.";
+      if(isMegaRAID()) body += " MegaRAID planner: clear foreign when needed, bring members to UGood, abort on in-use or mismatched Intf/Med/SeSz.";
+    }
+    body += " Sizes: "+tokens.map(function(t,i){ return "#"+(i+1)+"="+(t?t+"MB":"rest"); }).join(", ")+".";
+    var ok=await confirmLayoutChange(tokens.length>1 ? "Create "+tokens.length+" logical drives?" : "Create logical drive?", body, previewCreatePlan(tokens));
+    if(!ok) return;
+    await withRun("creating logical drive"+(tokens.length>1?"s":"")+"…", async function(){
+      var group = slicing ? String(sliceTarget.group) : "";
+      for(var i=0;i<tokens.length;i++){
+        var args;
+        if(i===0 && !slicing){
+          args=createArgsAt(tokens[i], {drives:drives.join(",")});
+        } else {
+          if(!group){
+            await loadConfig();
+            group=findGroupForMembers(drives);
+            if(!group){
+              notify("Created first volume but could not find the drive group to slice — use Slice on the new array", true);
+              await reload({silent:true, okMsg:"First volume created; remaining sizes not applied"});
+              return;
+            }
+          }
+          args=createArgsAt(tokens[i], {slice:true, group:group});
+        }
+        setFloatStatus("creating volume #"+(i+1)+"/"+tokens.length, false);
+        appendLocal("volume #"+(i+1)+"/"+tokens.length+(tokens[i]?(" · "+tokens[i]+" MB"):" · all remaining"), "local");
+        var r=await runCmd(args);
+        if(!r.ok){
+          notify("Create failed at volume #"+(i+1)+" — see batch log / command log", true);
+          await reload({silent:true});
+          return;
+        }
+        // After first new-group create, resolve group id for following slices.
+        if(i===0 && !slicing && tokens.length>1){
+          await loadConfig();
+          group=findGroupForMembers(drives);
+          if(!group){
+            notify("Created first volume but could not find the drive group for the remaining sizes — use Slice", true);
+            await reload({silent:true, okMsg:"First volume created; remaining sizes not applied"});
+            return;
+          }
+        }
+      }
+      sel.clear(); sliceTarget=null; vdSizes=[""];
+      await reload({silent:true, okMsg: batchMode
+        ? (tokens.length+" volume(s) created on "+SERVER_IDS.length+" servers")
+        : (tokens.length>1 ? (tokens.length+" volumes created") : "Logical drive created")});
+    });
+  }
+  async function clearForeign(){
+    var args=["ctrl","slot="+cfg.slot,"foreign","delete","forced"];
+    var ok=await confirmLayoutChange("Clear foreign config?", "Deletes foreign RAID metadata on the controller (storcli /cN/fall del). Needed when reused disks show Foreign/UBad.", previewCmd(args));
+    if(!ok) return;
+    await withRun("clearing foreign config…", async function(){
+      var r=await runCmd(args);
+      if(r.ok) await reload({silent:true, okMsg:"Foreign config cleared (or none present)"});
+      else notify("Clear foreign failed — see log", true);
+    });
+  }
+  async function markSelectedGood(){
+    if(!sel.size){ notify("Select drives first", true); return; }
+    var args=["ctrl","slot="+cfg.slot,"pd",Array.from(sel).join(","),"set","good","forced"];
+    var ok=await confirmLayoutChange("Mark drives UGood?", "Planner brings selected PDs to UGood (clears foreign, recovers UBad, takes JBOD back from the OS). Needed before Create. JBOD→UGood hides disks from Linux.", previewCmd(args));
+    if(!ok) return;
+    await withRun("marking drives UGood…", async function(){
+      var r=await runCmd(args);
+      if(r.ok) await reload({silent:true, okMsg:"Selected drives marked UGood"});
+      else notify("Set good failed — see log", true);
+    });
+  }
+  async function markSelectedJbod(){
+    if(!sel.size){ notify("Select drives first", true); return; }
+    var args=["ctrl","slot="+cfg.slot,"pd",Array.from(sel).join(","),"set","jbod"];
+    var ok=await confirmLayoutChange("Expose drives as JBOD?", "Planner enables controller passthrough (jbod/autoconfig/personality) then set jbod per drive so Linux gets /dev/sdX. Use for Ceph/ZFS. Tri-mode cards may need an explicit personality change + reboot first.", previewCmd(args));
+    if(!ok) return;
+    await withRun("exposing drives as JBOD…", async function(){
+      var r=await runCmd(args);
+      if(r.ok) await reload({silent:true, okMsg:"Selected drives exposed as JBOD"});
+      else {
+        await reload({silent:true});
+        notify("Set JBOD failed — see log (bay view refreshed; tri-mode may need personality + reboot)", true);
+      }
+    });
+  }
+  async function exposeAllFree(){
+    var args=["ctrl","slot="+cfg.slot,"expose","free"];
+    var ok=await confirmLayoutChange("Expose all free drives as JBOD?", "Every UGood/UBad drive on the controller becomes JBOD. VD members and hot spares are left alone. Fixes storcli bay count >> lsblk disk count.", previewCmd(args));
+    if(!ok) return;
+    await withRun("exposing free drives as JBOD…", async function(){
+      var r=await runCmd(args);
+      if(r.ok) await reload({silent:true, okMsg:"Free drives exposed as JBOD"});
+      else {
+        // Always refresh: controller passthrough may have succeeded even when one
+        // per-drive set jbod was refused (e.g. drive already JBOD after autoconfig).
+        await reload({silent:true});
+        notify("Expose free reported an error — see log (bay view refreshed)", true);
+      }
+    });
+  }
+  async function deleteLd(id){
+    var a=arrays().find(function(x){ return x.ld.id===id; });
+    if(!a){ notify("Logical drive not found", true); return; }
+    var args=["ctrl","slot="+cfg.slot,"ld",String(id),"delete","forced"];
+    var ok=await confirmLayoutChange("Delete logical drive "+id+"?", "Array "+a.name+" ("+(a.drives||[]).join(", ")+") destroyed on "+SERVER_IDS.length+" server(s).", previewCmd(args));
+    if(!ok) return;
+    await withRun("deleting logical drive…", async function(){
+      var r=await runCmd(args);
+      if(r.ok){ await reload({silent:true, okMsg: batchMode ? ("Logical drive deleted on "+SERVER_IDS.length+" servers") : "Logical drive deleted"}); }
+      else notify("Delete failed — see batch log / command log", true);
+    });
+  }
+  async function blinkSel(){
+    await withRun("blinking drive LEDs…", async function(){
+      var on=!Array.from(sel).every(function(a){ return blinking.has(a); });
+      for (var a of sel){ await runCmd(["ctrl","slot="+cfg.slot,"pd",a,"modify","led="+(on?"on":"off")]); if(on) blinking.add(a); else blinking.delete(a); }
+      renderBays();
+    });
+  }
+  async function blinkLd(id){
+    var a=arrays().find(function(x){ return x.ld.id===id; });
+    if(!a){ notify("Logical drive not found", true); return; }
+    var members=a.drives||[];
+    var on=!members.every(function(x){ return blinking.has(x); });
+    await withRun("blinking array LEDs…", async function(){
+      await runCmd(["ctrl","slot="+cfg.slot,"ld",String(id),"modify","led="+(on?"on":"off")]);
+      members.forEach(function(x){ if(on) blinking.add(x); else blinking.delete(x); });
+      renderBays();
+    });
+  }
+  async function reload(opts){
+    opts = opts || {};
+    // On open / explicit reload: drop any previous bay paint (bfcache / prior visit)
+    // before the live storcli/ssacli job returns — never flash a cached map.
+    // Silent post-action refreshes keep the old paint until the new live cfg arrives.
+    if(!opts.silent){
+      clearChassis();
+      clearBanner();
+      showFloat();
+      setFloatStatus(opts.busy || "Loading storage config…", false);
+      appendLocal(opts.busy || "loading storage config…", "local");
+    }
+    try{
+      await loadConfig();
+      targetsLine();
+      render();
+      if(hostPartsAPI && hostPartsAPI.refreshAnnotations) hostPartsAPI.refreshAnnotations();
+      if(opts.okMsg) notify(opts.okMsg);
+      else if(batchMode && batchCompatible) notify("Batch mode: identical controller + HDD layout on "+SERVER_IDS.length+" servers");
+      if(!opts.silent){
+        var doneMsg = batchMode
+          ? (batchCompatible ? ("batch ready · "+SERVER_IDS.length+" identical layouts") : "batch blocked")
+          : "config loaded";
+        setFloatStatus(doneMsg, !!(batchMode && !batchCompatible));
+        appendLocal(doneMsg, batchMode && !batchCompatible ? "error" : "local");
+      }
+    }catch(e){
+      log(String(e),"err");
+      targetsLine();
+      if(!opts.silent){
+        clearChassis();
+        var load=$("chassisLoading");
+        if(load){ load.hidden=false; load.textContent="Controller config failed — "+String(e.message||e); }
+      }
+      notify(String(e.message||e), true);
+      setFloatStatus("failed", true);
+      appendLocal("config failed: "+String(e.message||e), "error");
+    }
+  }
+
+  var hostPartsAPI = null;
+  function mountHostPartitions(){
+    function tryMount(){
+      if(!window.CopperHostPartitions) return false;
+      var root = document.querySelector("[data-copper-host-parts]");
+      if(!root) return false;
+      hostPartsAPI = CopperHostPartitions.mount({
+        root: root,
+        serverIds: SERVER_IDS,
+        nameById: nameById,
+        isBusy: function(){ return running; },
+        setBusy: function(v){ running = !!v; },
+        log: function(msg, level){
+          appendLocal(msg, level==="error"?"error":(level||"local"));
+          if(level==="error") log(msg, "err");
+        },
+        notify: notify,
+        showActivity: showFloat,
+        setActivityStatus: setFloatStatus,
+        clearBanner: clearBanner,
+        confirm: function(title, body, cmd){ return confirmLayoutChange(title, body, cmd); },
+        waitJob: waitJob,
+        diskExtraHTML: function(d){
+          var pd=driveByOSPath(d.path);
+          var arr=arrayByOSPath(d.path);
+          if(arr){
+            var volLabel = isMegaRAID() ? ("VD "+arr.ld.id) : ("LD "+arr.ld.id);
+            var bayBits = (arr.drives||[]).map(function(addr){
+              var dr=drive(addr);
+              return dr && dr.bay!=null ? ("bay "+dr.bay) : addr;
+            }).filter(Boolean).join(", ");
+            return ' <span class="bay-link">Array '+esc(arr.name)+' · '+esc(volLabel)+(bayBits?" · "+esc(bayBits):"")+'</span>';
+          }
+          if(pd){
+            var role=driveRole(pd);
+            return ' <span class="bay-link">bay '+pd.bay+' · '+esc(pd.addr)+' · '+esc(role.label)+'</span>';
+          }
+          if(!d.protected && cfg && (isMegaRAID()||isSmartArray()) && /sd[a-z]+$/.test(String(d.path||""))){
+            return ' <span class="unmapped">not matched to a volume (WWN/size bind)</span>';
+          }
+          return "";
+        },
+        footerHTML: function(){
+          var held=[];
+          drives().forEach(function(pd){
+            var role=driveRole(pd);
+            if(role.kind==="ugood" || (role.kind==="bad" && !pd.disk)){
+              held.push("bay "+pd.bay+" · "+pd.addr+" · "+role.label);
+            }
+          });
+          if(!held.length) return "";
+          return '<p class="hint held">Controller-held (not in lsblk): <span class="bay-link held">'+esc(held.join("; "))+"</span>. Expose as JBOD to make them OS-visible.</p>";
+        }
+      });
+      return true;
+    }
+    if(tryMount()) return;
+    var n=0;
+    var t=setInterval(function(){
+      n++;
+      if(tryMount() || n>80) clearInterval(t);
+    }, 50);
+  }
+
+  $("createBtn").addEventListener("click", createLd);
+  $("blinkBtn").addEventListener("click", blinkSel);
+  $("clearBtn").addEventListener("click", function(){
+    clearBanner(); sel.clear(); sliceTarget=null; vdSizes=[""];
+    if($("raid")) $("raid").disabled=false;
+    var vp=$("vdPlan"); if(vp) vp.dataset.bound="0";
+    render();
+  });
+  if($("vdAddBtn")) $("vdAddBtn").addEventListener("click", function(){
+    // Keep a blank “rest” row last: insert a sized row before it when last is empty.
+    if(vdSizes.length && String(vdSizes[vdSizes.length-1]).trim()===""){
+      vdSizes.splice(vdSizes.length-1, 0, "");
+    } else {
+      vdSizes.push("");
+    }
+    var el=$("vdPlan"); if(el) el.dataset.bound="0";
+    renderVdPlan(true);
+    renderActions();
+    el=$("vdPlan");
+    if(el){
+      var inputs=el.querySelectorAll("input[data-vd-i]");
+      var focus = inputs[Math.max(0, inputs.length-2)] || inputs[inputs.length-1];
+      if(focus) focus.focus();
+    }
+  });
+  if($("foreignDelBtn")) $("foreignDelBtn").addEventListener("click", clearForeign);
+  if($("setGoodBtn")) $("setGoodBtn").addEventListener("click", markSelectedGood);
+  if($("setJbodBtn")) $("setJbodBtn").addEventListener("click", markSelectedJbod);
+  if($("exposeFreeBtn")) $("exposeFreeBtn").addEventListener("click", exposeAllFree);
+  $("refreshBtn").addEventListener("click", function(){ reload({busy:"Reloading storage config…"}); });
+  $("rescanBtn").addEventListener("click", async function(){
+    await withRun("rescanning drives…", async function(){
+      await runCmd(["rescan"]);
+      await reload({silent:true, okMsg:"Rescan complete"});
+    });
+  });
+  mountHostPartitions();
+  $("raid").addEventListener("change", renderActions);
+  $("ss").addEventListener("change", renderActions);
+  $("rawForm").addEventListener("submit", async function(e){
+    e.preventDefault();
+    var v=$("rawCmd").value.trim(); if(!v) return;
+    if(!/\bshow\b/.test(v)||/\b(create|delete|modify|rescan)\b/.test(v)){ notify("Only read-only show commands run from here", true); return; }
+    await withRun("running show…", async function(){ await runCmd(v.split(/\s+/)); });
+  });
+
+  if(floatClear){
+    floatClear.addEventListener("click", function(){ if(floatBody) floatBody.textContent=""; });
+  }
+  if(floatToggle){
+    floatToggle.addEventListener("click", function(){
+      if(!floatLog) return;
+      floatLog.classList.toggle("is-minimized");
+      floatToggle.textContent = floatLog.classList.contains("is-minimized") ? "Expand" : "Minimize";
+    });
+  }
+  (function initFloatDrag(){
+    if(!floatLog) return;
+    var handle=document.getElementById("float-log-drag");
+    if(!handle) return;
+    var storageKey="copper_float_log_pos";
+    var dragging=false, startX=0, startY=0, originLeft=0, originTop=0;
+    function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
+    function applyPos(left, top){
+      var rect=floatLog.getBoundingClientRect();
+      left=clamp(left, 0, Math.max(0, window.innerWidth-rect.width));
+      top=clamp(top, 0, Math.max(0, window.innerHeight-rect.height));
+      floatLog.style.left=left+"px"; floatLog.style.top=top+"px";
+      floatLog.style.right="auto"; floatLog.style.bottom="auto";
+      return {left:left, top:top};
+    }
+    function ensureRestored(){
+      if(floatLog.dataset.posReady==="1") return;
+      floatLog.dataset.posReady="1";
+      try{
+        var raw=localStorage.getItem(storageKey);
+        if(!raw) return;
+        var pos=JSON.parse(raw);
+        if(typeof pos.left==="number" && typeof pos.top==="number") applyPos(pos.left, pos.top);
+      }catch(_e){}
+    }
+    new MutationObserver(function(){ if(!floatLog.hidden) ensureRestored(); }).observe(floatLog,{attributes:true, attributeFilter:["hidden"]});
+    handle.addEventListener("pointerdown", function(e){
+      if(e.button!=null && e.button!==0) return;
+      if(e.target && e.target.closest && e.target.closest("button, a, input, select, textarea")) return;
+      ensureRestored();
+      var rect=floatLog.getBoundingClientRect();
+      applyPos(rect.left, rect.top);
+      dragging=true; floatLog.classList.add("is-dragging");
+      startX=e.clientX; startY=e.clientY; originLeft=rect.left; originTop=rect.top;
+      handle.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    handle.addEventListener("pointermove", function(e){
+      if(!dragging) return;
+      applyPos(originLeft+(e.clientX-startX), originTop+(e.clientY-startY));
+    });
+    function endDrag(e){
+      if(!dragging) return;
+      dragging=false; floatLog.classList.remove("is-dragging");
+      try{ handle.releasePointerCapture(e.pointerId); }catch(_e){}
+      var pos=applyPos(floatLog.getBoundingClientRect().left, floatLog.getBoundingClientRect().top);
+      try{ localStorage.setItem(storageKey, JSON.stringify(pos)); }catch(_e){}
+    }
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+  })();
+
+  targetsLine();
+  reload({busy:"Loading storage config…"});
+})();
+</script>
+{{end}}

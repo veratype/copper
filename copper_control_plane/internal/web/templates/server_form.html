@@ -1,0 +1,93 @@
+{{define "content"}}
+<section class="narrow">
+  <h1>{{if .Editing}}Edit{{else}}Add{{end}} server</h1>
+  {{if not .Editing}}
+  <p class="muted">Name, BMC username, and BMC password are required. Also fill <strong>at least one</strong> of chassis ID, Redfish endpoint, or iLO MAC — the others can stay empty. Saving creates a <strong>declared</strong> server. Open it and use <strong>Probe</strong> (or wait for OOB DHCP) to bind before Inventory / Boot / Reboot unlock.</p>
+  {{end}}
+  {{$hadInstalled := false}}{{if .Server}}{{range .Server.Labels}}{{if eq . "installed"}}{{$hadInstalled = true}}{{end}}{{end}}{{end}}
+  <form method="post" action="{{if .Editing}}/servers/{{.Server.ID}}/edit{{else}}/servers/new{{end}}" class="stack" id="server-edit-form"
+        data-had-installed="{{if $hadInstalled}}1{{end}}"
+        data-server-name="{{if .Server}}{{.Server.Name}}{{end}}">
+    <label>Name
+      <input name="name" required value="{{if .Server}}{{.Server.Name}}{{end}}" placeholder="rack1-node3">
+    </label>
+    <label>Chassis ID
+      <input name="chassis_id" value="{{if .Server}}{{.Server.ChassisID}}{{end}}" placeholder="system serial (filled from Inventory)">
+    </label>
+    <label>Redfish / iLO endpoint
+      <input name="endpoint" value="{{if .Server}}{{.Server.Endpoint}}{{end}}" placeholder="https://192.168.0.100">
+    </label>
+    <label>iLO / BMC MAC
+      <input name="mac" value="{{if .Server}}{{.Server.MAC}}{{end}}" placeholder="aa:bb:cc:dd:ee:01">
+    </label>
+    <label>BMC username
+      <input name="username" required value="{{if .Server}}{{.Server.Username}}{{end}}">
+    </label>
+    <label>BMC password
+      <input type="password" name="password" {{if not .Editing}}required{{end}} placeholder="{{if .Editing}}leave blank to keep{{end}}">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="insecure" value="1" {{if or (not .Server) (and .Server .Server.Insecure)}}checked{{end}}>
+      Skip TLS certificate verify
+    </label>
+    <label>Labels
+      <textarea name="labels" rows="2" placeholder="prod, gpu, rack-1 (comma or newline; leave empty for none)" list="known-labels">{{if .Server}}{{range $i, $l := .Server.Labels}}{{if $i}}, {{end}}{{$l}}{{end}}{{end}}</textarea>
+    </label>
+    {{if .AllLabels}}
+    <datalist id="known-labels">
+      {{range .AllLabels}}<option value="{{.}}">{{end}}
+    </datalist>
+    {{end}}
+    <p class="muted">Optional. Add as many as you want — zero is fine. New names are created on save. Removing <code>installed</code> requires an extra confirmation.</p>
+    {{if $hadInstalled}}
+    <p class="error">This server currently has the <code>installed</code> label. Clearing it will silence reboot / storage / deploy cautions.</p>
+    {{end}}
+    <label>Notes
+      <textarea name="notes" rows="3">{{if .Server}}{{.Server.Notes}}{{end}}</textarea>
+    </label>
+    <fieldset class="stack" style="border:0;padding:0;margin:0">
+      <h2 style="font-size:1rem;margin:0.5rem 0 0">Provisioned OS network (optional)</h2>
+      <p class="muted">Used by Deploy OS. Non-empty values win over the Deploy form unless you clear them here.</p>
+      <label>Provisioned hostname
+        <input name="provisioned_hostname" value="{{if .Server}}{{.Server.ProvisionedHostname}}{{end}}" placeholder="node-01" spellcheck="false">
+      </label>
+      <label>Provisioned IP (CIDR)
+        <input name="provisioned_ip_cidr" value="{{if .Server}}{{.Server.ProvisionedIPCIDR}}{{end}}" placeholder="10.0.0.20/24" spellcheck="false">
+      </label>
+      <label>Provisioned gateway
+        <input name="provisioned_gw" value="{{if .Server}}{{.Server.ProvisionedGW}}{{end}}" placeholder="10.0.0.1" spellcheck="false">
+      </label>
+      <label>Provisioned DNS (comma-separated)
+        <input name="provisioned_dns" value="{{if .Server}}{{.Server.ProvisionedDNS}}{{end}}" placeholder="1.1.1.1, 8.8.8.8" spellcheck="false">
+      </label>
+    </fieldset>
+    <button type="submit">Save</button>
+  </form>
+
+  {{if .Editing}}
+  <form method="post" action="/servers/{{.Server.ID}}/actions/lookup-mac" class="stack panel busy" data-busy="Looking up MAC via agent…" style="margin-top:1.25rem">
+    <h2>Resolve iLO MAC from IP</h2>
+    <p class="muted">Uses <code>copper_bmc</code> on the OOB network to ARP the endpoint host (IP → MAC). Edit the endpoint above and Save first if you changed it.</p>
+    <button type="submit">Lookup MAC from endpoint IP</button>
+  </form>
+  {{end}}
+</section>
+<script>
+(function () {
+  var form = document.getElementById("server-edit-form");
+  if (!form || form.getAttribute("data-had-installed") !== "1") return;
+  form.addEventListener("submit", function (ev) {
+    var raw = (form.querySelector('[name="labels"]') || {}).value || "";
+    var still = false;
+    String(raw).split(/[,;\n\r]+/).forEach(function (p) {
+      if (String(p).replace(/\s+/g, " ").trim().toLowerCase() === "installed") still = true;
+    });
+    if (still) return;
+    var name = form.getAttribute("data-server-name") || "this server";
+    if (window.CopperInstalled && !window.CopperInstalled.confirmRemoveInstalled([name])) {
+      ev.preventDefault();
+    }
+  });
+})();
+</script>
+{{end}}

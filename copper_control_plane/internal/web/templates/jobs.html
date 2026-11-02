@@ -1,0 +1,68 @@
+{{define "content"}}
+<section class="row">
+  <div>
+    <h1>Jobs</h1>
+    <p class="muted">Background I/O work (provision, storage, Redfish). Queued jobs keep running if you leave this page — open a job for live log.</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn ghost" id="jobs-refresh">Refresh</button>
+  </div>
+</section>
+
+<div class="activity-toolbar jobs-toolbar">
+  <label class="activity-filter">Status
+    <select id="jobs-status">
+      <option value="">all (newest first)</option>
+      <option value="queued">queued</option>
+      <option value="running">running</option>
+      <option value="ok">ok</option>
+      <option value="error">error</option>
+      <option value="cancelled">cancelled</option>
+    </select>
+  </label>
+  <label class="activity-filter">Type
+    <select id="jobs-type">
+      <option value="">all types</option>
+      <option value="provision.write">provision.write</option>
+      <option value="provision.preflight">provision.preflight</option>
+      <option value="storage.detect">storage.detect</option>
+      <option value="storage.config">storage.config</option>
+      <option value="storage.exec">storage.exec</option>
+      <option value="storage.wipe-partitions">storage.wipe-partitions</option>
+      <option value="softraid.scan">softraid.scan</option>
+      <option value="softraid.exec">softraid.exec</option>
+      <option value="redfish.probe">redfish.probe</option>
+      <option value="redfish.inventory">redfish.inventory</option>
+      <option value="redfish.reset">redfish.reset</option>
+      <option value="redfish.mount">redfish.mount</option>
+      <option value="redfish.convert-uefi">redfish.convert-uefi</option>
+    </select>
+  </label>
+  <span class="muted activity-status" id="jobs-status-line">loading…</span>
+</div>
+
+<div class="jobs-layout">
+  <div class="table-wrap">
+    <table class="prov-status" id="jobs-table">
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>Type</th>
+          <th>Server</th>
+          <th>Status</th>
+          <th>Phase</th>
+          <th>Started</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="jobs-body"></tbody>
+    </table>
+  </div>
+  <aside class="jobs-detail panel stack" id="jobs-detail" hidden>
+    <h2 id="jobs-detail-title">Job</h2>
+    <p class="muted" id="jobs-detail-meta"></p>
+    <p class="error" id="jobs-detail-error" hidden></p>
+    <pre class="console" id="jobs-detail-log" aria-live="polite"></pre>
+  </aside>
+</div>
+{{end}}

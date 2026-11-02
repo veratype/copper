@@ -1,0 +1,255 @@
+{{define "content"}}
+<section id="servers-page">
+  <div class="row">
+    <div>
+      <h1>Bare-metal servers</h1>
+      <p class="muted">Agent: <code>{{.AgentURL}}</code>{{if eq .AgentMode "poll"}}{{if .AgentLastSeen}} — last seen <code>{{.AgentLastSeen}}</code>{{if .AgentOS}} ({{.AgentOS}}){{end}}{{end}}{{end}}</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="/servers/import">Import CSV</a>
+      <a class="btn" href="/servers/new">Add server</a>
+      <form method="post" action="/servers/sync-dhcp" class="busy" data-busy="Syncing OOB DHCP + LLDP…">
+        <button type="submit">Sync OOB DHCP + LLDP</button>
+      </form>
+    </div>
+  </div>
+
+  <form class="filter-bar" id="servers-filter" method="get" action="/">
+    <label class="filter-q">Search
+      <input type="search" name="q" value="{{.FilterQ}}" placeholder="name, chassis, MAC, label…" autocomplete="off">
+    </label>
+    <label class="filter-status">Status
+      <select name="status">
+        <option value="" {{if eq .FilterStatus ""}}selected{{end}}>Any</option>
+        <option value="bound" {{if eq .FilterStatus "bound"}}selected{{end}}>Bound</option>
+        <option value="declared" {{if eq .FilterStatus "declared"}}selected{{end}}>Declared</option>
+      </select>
+    </label>
+    {{if .AllLabels}}
+    <fieldset class="filter-labels">
+      <legend>Labels <span class="muted">(match all)</span></legend>
+      <div class="label-chip-row">
+        {{range .AllLabels}}
+        <label class="label-chip {{if index $.FilterLabelSet .}}is-on{{end}}">
+          <input type="checkbox" name="label" value="{{.}}" {{if index $.FilterLabelSet .}}checked{{end}}>
+          <span>{{.}}</span>
+        </label>
+        {{end}}
+      </div>
+    </fieldset>
+    {{end}}
+    <div class="filter-actions">
+      <button type="submit" class="btn">Filter</button>
+      {{if .FilterActive}}<a class="btn ghost" href="/">Clear</a>{{end}}
+    </div>
+  </form>
+
+  {{if not .Servers}}
+  <p class="empty">{{if .FilterActive}}No servers match these filters. <a href="/">Clear filters</a>.{{else}}No servers yet. Add BMC endpoints manually or <a href="/servers/import">import a CSV</a>. Imported rows stay <em>declared</em> until you Probe with credentials or OOB DHCP matches MAC/IP.{{end}}</p>
+  {{else}}
+  <div class="batch-bar" id="batch-bar">
+    <div class="batch-select">
+      <label class="check">
+        <input type="checkbox" id="batch-select-all" title="Select all servers">
+        Select
+      </label>
+      <button type="button" class="btn ghost" id="batch-select-none">None</button>
+      <button type="button" class="btn ghost" id="batch-select-bound">Bound only</button>
+      <button type="button" class="btn ghost" id="batch-select-declared">Declared only</button>
+      <span class="muted" id="batch-count">0 selected</span>
+      <span class="muted" id="batch-runtime-hint"><a href="/settings">Settings</a></span>
+    </div>
+    <div class="batch-actions">
+      <button type="button" class="btn" id="batch-probe" disabled>Probe</button>
+      <button type="button" class="btn" id="batch-inventory" disabled>Inventory</button>
+      <button type="button" class="btn" id="batch-power-on" disabled title="Redfish ResetType=On">Power on</button>
+      <button type="button" class="btn" id="batch-power-off" disabled title="Redfish ResetType=ForceOff">Power off</button>
+      <button type="button" class="btn" id="batch-reboot" disabled title="Redfish ResetType=ForceRestart">Reboot</button>
+      <button type="button" class="btn" id="batch-convert-uefi" disabled title="Persistent BIOS boot mode → UEFI via Redfish, then reboot">Convert to UEFI</button>
+      <button type="button" class="btn" id="batch-mount" disabled title="Mount ISO and one-time boot in UEFI mode">Mount &amp; boot</button>
+      <button type="button" class="btn" id="batch-detect-raid" disabled title="Requires live OS booted (Data DHCP lease) and live-OS SSH in Settings">Detect RAID</button>
+      <button type="button" class="btn" id="batch-storage" disabled title="Open storage console for selected servers">Storage</button>
+      <button type="button" class="btn" id="batch-softraid" disabled title="Open Soft RAID (mdadm) console for selected servers">Soft RAID</button>
+      <button type="button" class="btn" id="batch-deploy" disabled title="Provision Ubuntu cloud image (requires persisted HDD layout)">Deploy OS</button>
+      <button type="button" class="btn" id="batch-labels" disabled title="Add or remove labels on selected servers">Labels…</button>
+      <button type="button" class="btn danger" id="batch-delete" disabled>Delete</button>
+      <a class="btn ghost" id="batch-zip" hidden href="#">Download inventories ZIP</a>
+    </div>
+  </div>
+
+  <div id="batch-labels-panel" class="panel stack batch-mount-panel" hidden>
+    <div class="row">
+      <h2>Batch labels</h2>
+      <button type="button" class="btn ghost" id="batch-labels-cancel">Cancel</button>
+    </div>
+    <p class="muted">Add or remove as many labels as you want on every selected server. New names are created automatically. Separate with commas or newlines.</p>
+    <label>Labels
+      <textarea id="batch-labels-input" rows="3" placeholder="prod, gpu&#10;rack-1" list="known-labels"></textarea>
+    </label>
+    {{if .AllLabels}}
+    <datalist id="known-labels">
+      {{range .AllLabels}}<option value="{{.}}">{{end}}
+    </datalist>
+    {{end}}
+    <fieldset class="mount-source">
+      <legend class="sr-only">Mode</legend>
+      <label class="check">
+        <input type="radio" name="batch_label_mode" value="add" checked>
+        Add labels (keep existing)
+      </label>
+      <label class="check">
+        <input type="radio" name="batch_label_mode" value="remove">
+        Remove labels
+      </label>
+    </fieldset>
+    <button type="button" class="btn" id="batch-labels-run">Apply to selected</button>
+  </div>
+
+  <table id="servers-table">
+    <thead>
+      <tr>
+        <th class="col-check"></th>
+        <th>Name</th>
+        <th>Labels</th>
+        <th>Status</th>
+        <th>Data IP</th>
+        <th>RAID</th>
+        <th>Chassis</th>
+        <th>Redfish endpoint</th>
+        <th>BMC MAC</th>
+        <th>User</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Servers}}
+      <tr data-server-id="{{.ID}}"
+          data-server-name="{{.Name}}"
+          data-status="{{.Status}}"
+          data-endpoint="{{.Endpoint}}"
+          data-data-ip="{{index $.DataIPs .ID}}"
+          data-raid="{{index $.RaidFamily .ID}}"
+          data-labels="{{range $i, $l := .Labels}}{{if $i}},{{end}}{{$l}}{{end}}">
+        <td class="col-check">
+          <input type="checkbox" class="batch-check"
+                 value="{{.ID}}"
+                 data-name="{{.Name}}"
+                 data-status="{{.Status}}"
+                 data-endpoint="{{.Endpoint}}"
+                 data-data-ip="{{index $.DataIPs .ID}}"
+                 data-raid="{{index $.RaidFamily .ID}}"
+                 data-labels="{{range $i, $l := .Labels}}{{if $i}},{{end}}{{$l}}{{end}}"
+                 title="Select for batch actions">
+        </td>
+        <td>
+          <span class="row-status" hidden aria-hidden="true">
+            <svg class="row-spinner" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <circle class="busy-track" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"/>
+              <circle class="busy-arc row-arc" cx="12" cy="12" r="9" fill="none" stroke-width="2.5"
+                      stroke-linecap="round" stroke-dasharray="40 56"/>
+            </svg>
+          </span>
+          <a href="/servers/{{.ID}}">{{.Name}}</a>
+          <span class="row-msg muted" hidden></span>
+        </td>
+        <td class="labels-cell">
+          {{if .Labels}}
+          <span class="label-chip-row">
+            {{range .Labels}}<span class="badge badge-label{{if eq . "installed"}} badge-installed{{end}}">{{.}}</span>{{end}}
+          </span>
+          {{else}}
+          <span class="muted">—</span>
+          {{end}}
+        </td>
+        <td>
+          {{if eq .Status "declared"}}
+          <span class="badge badge-declared">declared</span>
+          {{else}}
+          <span class="badge badge-bound">bound</span>
+          {{end}}
+          {{if eq .Source "import"}}<span class="muted"> · csv</span>{{end}}
+        </td>
+        <td class="data-ip-cell" title="Live Data DHCP lease — SSH / RAID / deploy target">
+          {{with index $.DataIPs .ID}}
+          <code class="data-ip">{{.}}</code>
+          {{else}}
+          <span class="muted">—</span>
+          {{end}}
+        </td>
+        <td class="raid-cell">
+          {{with index $.RaidFamily .ID}}
+          <span class="badge badge-raid">{{.}}</span>
+          {{else}}
+          <span class="muted">—</span>
+          {{end}}
+        </td>
+        <td>{{if .ChassisID}}<code>{{.ChassisID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{if .Endpoint}}<code>{{.Endpoint}}</code>{{else}}<span class="muted">pending</span>{{end}}</td>
+        <td>{{if .MAC}}<code>{{.MAC}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{.Username}}</td>
+        <td class="actions">
+          <a href="/servers/{{.ID}}">Open</a>
+          <a href="/servers/{{.ID}}/storage">Storage</a>
+          <a href="/servers/{{.ID}}/softraid">Soft RAID</a>
+          <a href="/servers/{{.ID}}/deploy">Deploy</a>
+          <form method="post" action="/servers/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Name}}?')">
+            <button type="submit" class="linkish">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <div id="batch-mount-panel" class="panel stack batch-mount-panel" hidden>
+    <div class="row">
+      <h2>Batch Mount &amp; boot</h2>
+      <button type="button" class="btn ghost" id="batch-mount-cancel">Cancel</button>
+    </div>
+    <p class="muted">Same image URL is sent to every selected server. BMC must reach the OOB media plane. One-time boot uses <code>BootSourceOverrideMode=UEFI</code>. If a host is pure Legacy, run <strong>Convert to UEFI</strong> first.</p>
+    <fieldset class="mount-source">
+      <legend class="sr-only">Image source</legend>
+      <label class="check">
+        <input type="radio" name="batch_url_source" value="library" checked>
+        Pick from copper_bmc media folder
+      </label>
+      <label class="check">
+        <input type="radio" name="batch_url_source" value="manual">
+        Enter URL manually
+      </label>
+    </fieldset>
+    <div id="batch-mount-library" class="stack">
+      <p class="muted" id="batch-media-meta"></p>
+      <label>File
+        <select id="batch-media-select">
+          <option value="">— loading —</option>
+        </select>
+      </label>
+      <label id="batch-media-base-wrap" hidden>OOB media base URL (BMC-reachable)
+        <input id="batch-media-base" type="url" placeholder="http://192.168.10.20:8080" autocomplete="off">
+      </label>
+    </div>
+    <div id="batch-mount-manual" class="stack" hidden>
+      <label>Image URL
+        <input id="batch-image-url-manual" type="url" placeholder="http://&lt;oob-ip&gt;:8080/os.iso" autocomplete="off">
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" id="batch-mount-boot-once" value="1" checked> Boot once to media</label>
+    <label class="check"><input type="checkbox" id="batch-mount-reboot" value="1" checked> Reboot after mount</label>
+    <button type="button" class="btn" id="batch-mount-run">Mount &amp; boot selected</button>
+  </div>
+  {{end}}
+</section>
+
+<aside id="float-log" class="float-log" hidden>
+  <div class="float-log-head" id="float-log-drag" title="Drag to move">
+    <strong>Batch / activity</strong>
+    <div class="float-log-actions">
+      <button type="button" class="btn ghost" id="float-log-clear">Clear</button>
+      <button type="button" class="btn ghost" id="float-log-toggle">Minimize</button>
+    </div>
+  </div>
+  <p class="muted float-log-status" id="float-log-status">idle</p>
+  <div id="float-log-body" class="float-log-body" aria-live="polite"></div>
+</aside>
+{{end}}

@@ -1,0 +1,27 @@
+{{define "content"}}
+<section class="auth">
+  <h1>Control plane</h1>
+  <p class="muted">Enter the master password from <code>config.yaml</code>.</p>
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" id="login-next" value="{{.Next}}">
+    <label>Master password
+      <input type="password" name="password" required autofocus>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+</section>
+<script>
+(function () {
+  var el = document.getElementById("login-next");
+  if (!el) return;
+  var cur = (el.value || "").trim();
+  if (cur && cur !== "/") return;
+  try {
+    var saved = localStorage.getItem("copper_last_path") || "";
+    if (saved.charAt(0) === "/" && saved.indexOf("/login") !== 0 && saved.indexOf("//") !== 0) {
+      el.value = saved;
+    }
+  } catch (_e) {}
+})();
+</script>
+{{end}}
