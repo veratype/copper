@@ -75,6 +75,10 @@ type Controller struct {
 	Ports  []Port  `json:"ports"`
 	Drives []Drive `json:"drives"`
 	Arrays []Array `json:"arrays"`
+	// HBAOnly is true for adapters that speak storcli but cannot create hardware
+	// RAID VDs (e.g. Broadcom HBA 9500-8i). Copper still runs requested commands;
+	// Create / set-good style ops are expected to fail on the card.
+	HBAOnly bool `json:"hba_only,omitempty"`
 }
 
 // Normalize ensures list fields are non-nil so JSON encodes [] not null.

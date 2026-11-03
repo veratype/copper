@@ -18,6 +18,38 @@ func TestIsESPPart(t *testing.T) {
 	}
 }
 
+func TestSysfsListingIncludesMDAndRaidMemberNVMe(t *testing.T) {
+	// Mirrors the airgapped host: nvme3n1/nvme5n1 hold md127 members; md127 itself
+	// is a top-level lsblk row. Older scans only kept TYPE=disk and dropped these.
+	raw := "" +
+		"DISK\tnvme0n1\t3200631791616\tDISK0\t\tnvme\tdisk\n" +
+		"DISK\tnvme3n1\t3200631791616\tDISK3\t\tnvme\tdisk\n" +
+		"PART\tnvme3n1\tnvme3n1p3\t3198530641920\tlinux_raid_member\t\t\t\t\t\tpart\n" +
+		"DISK\tnvme5n1\t3200631791616\tDISK5\t\tnvme\tdisk\n" +
+		"PART\tnvme5n1\tnvme5n1p3\t3198530641920\tlinux_raid_member\t\t\t\t\t\tpart\n" +
+		"DISK\tmd127\t3198530641920\t\t\t\traid1\n" +
+		"PART\tmd127\tmd127p1\t3198530641920\text4\t\t\t\t/\t\tpart\n"
+	disks, err := parseHostBlockListing(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]DiskParts{}
+	for _, d := range disks {
+		byName[d.Name] = d
+	}
+	for _, want := range []string{"nvme0n1", "nvme3n1", "nvme5n1", "md127"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("missing %s in %+v", want, byName)
+		}
+	}
+	if len(byName["nvme3n1"].Partitions) != 1 || byName["nvme3n1"].Partitions[0].Name != "nvme3n1p3" {
+		t.Fatalf("nvme3n1 parts: %+v", byName["nvme3n1"].Partitions)
+	}
+	if len(byName["md127"].Partitions) != 1 || byName["md127"].Partitions[0].Path != "/dev/md127p1" {
+		t.Fatalf("md127 parts: %+v", byName["md127"].Partitions)
+	}
+}
+
 func TestSysfsListingAttachesPartitionsAndExtraDisks(t *testing.T) {
 	// Matches the host-prep layout: many JBOD disks + a small sdk + NVMe with ESP.
 	raw := "" +
@@ -82,8 +114,8 @@ sudo: ignored
 	if _, ok := byName["loop0"]; ok {
 		t.Fatal("loop devices are not wipe targets")
 	}
-	if _, ok := byName["sr0"]; ok {
-		t.Fatal("optical devices are not disks")
+	if _, ok := byName["sr0"]; !ok {
+		t.Fatal("optical devices should appear (marked protected by ListDiskPartitions)")
 	}
 	sda := byName["sda"]
 	if len(sda.Partitions) != 2 || sda.Partitions[0].Path != "/dev/sda1" || sda.Partitions[1].Path != "/dev/sda2" {
@@ -150,7 +182,8 @@ func TestGuessPartParent(t *testing.T) {
 	cases := map[string]string{
 		"sda1": "sda", "sdb1": "sdb", "sdk5": "sdk", "xvda2": "xvda",
 		"nvme0n1p1": "nvme0n1", "nvme1n1p2": "nvme1n1", "mmcblk0p1": "mmcblk0",
-		"sda": "", "nvme0n1": "", "nvme1n1": "",
+		"md127p1": "md127", "md0p2": "md0",
+		"sda": "", "nvme0n1": "", "nvme1n1": "", "md127": "", "sr0": "",
 	}
 	for name, want := range cases {
 		if got := guessPartParent(name); got != want {

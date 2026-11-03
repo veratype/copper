@@ -177,11 +177,13 @@ func flattenLsblk(nodes []wipeLsblkNode, parent string) []blkRow {
 var (
 	reNVMePart = regexp.MustCompile(`^(nvme\d+n\d+)p\d+$`)
 	reMMCPart  = regexp.MustCompile(`^(mmcblk\d+)p\d+$`)
+	reMDPart   = regexp.MustCompile(`^(md\d+)p\d+$`)
 	reTailPart = regexp.MustCompile(`^([a-zA-Z]+)(\d+)$`)
 )
 
 // guessPartParent maps a kernel partition name to its whole-disk name.
-// sda1 → sda, nvme1n1p2 → nvme1n1, mmcblk0p1 → mmcblk0. Disks themselves return "".
+// sda1 → sda, nvme1n1p2 → nvme1n1, mmcblk0p1 → mmcblk0, md127p1 → md127.
+// Whole disks themselves (sda, nvme0n1, md127, sr0) return "".
 func guessPartParent(name string) string {
 	name = strings.TrimPrefix(strings.TrimSpace(name), "/dev/")
 	if name == "" {
@@ -193,23 +195,44 @@ func guessPartParent(name string) string {
 	if m := reMMCPart.FindStringSubmatch(name); m != nil {
 		return m[1]
 	}
+	// md127p1 / md0p2 — not md127 (array itself) or sr0 (optical).
+	if m := reMDPart.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
 	if m := reTailPart.FindStringSubmatch(name); m != nil {
-		// nvme0n1 is a disk (digits are not a trailing partition index only).
-		if strings.Contains(m[1], "nvme") || strings.Contains(m[1], "mmcblk") {
+		base := m[1]
+		// nvme0n1 / mmcblk0 are disks; digits are namespace, not partition index.
+		if strings.Contains(base, "nvme") || strings.Contains(base, "mmcblk") {
 			return ""
 		}
-		return m[1]
+		// sr0, md127, dm-0: trailing digits are the device id, not a partition.
+		if base == "sr" || base == "md" || base == "dm" || base == "loop" || base == "ram" || base == "zram" {
+			return ""
+		}
+		return base
 	}
 	return ""
 }
 
 func isPartType(typ string) bool {
-	switch strings.ToLower(strings.TrimSpace(typ)) {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	switch t {
 	case "part", "partition", "crypt", "lvm", "md":
 		return true
-	default:
-		return false
 	}
+	// md children sometimes report TYPE=raid1 / raid0 / …
+	return strings.HasPrefix(t, "raid")
+}
+
+// isWholeDiskType reports lsblk/sysfs TYPE values that should appear as top-level
+// Host partition rows (matches plain `lsblk` disks + md arrays + optical).
+func isWholeDiskType(typ string) bool {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	switch t {
+	case "disk", "rom", "mpath", "md":
+		return true
+	}
+	return strings.HasPrefix(t, "raid")
 }
 
 func assembleDiskParts(rows []blkRow) []DiskParts {
@@ -225,7 +248,12 @@ func assembleDiskParts(rows []blkRow) []DiskParts {
 		if pk := strings.TrimSpace(r.PKName); pk != "" && pk != name {
 			pkOf[name] = pk
 		}
-		if !strings.EqualFold(strings.TrimSpace(r.Type), "disk") {
+		// Whole disks + md/raid arrays (operators expect md127 next to nvme/sdX).
+		if !isWholeDiskType(r.Type) {
+			continue
+		}
+		// Skip partition-shaped names even if TYPE is wrong (e.g. sda1 as "disk").
+		if guessPartParent(name) != "" {
 			continue
 		}
 		if _, ok := diskAt[name]; ok {
@@ -310,15 +338,15 @@ func parentDiskName(name, pk string, isDisk map[string]bool, pkOf map[string]str
 }
 
 // ListDiskPartitions returns whole disks with their partitions.
-// Every OS-visible disk is included (HBA, JBOD, NVMe, and RAID logical drives).
+// Every OS-visible disk is included (HBA, JBOD, NVMe, md arrays, and RAID LDs).
 // Marks the live-OS / install-media disk as Protected so the UI can skip it.
 func ListDiskPartitions(ctx context.Context, h Host) (PartitionScan, error) {
-	// Walk /sys/block for the authoritative disk+partition set. lsblk JSON/tree
-	// mode often returns disks with an empty children[] (or flat siblings that
-	// older parsers dropped), which made the UI show "no partitions" while a
-	// plain `lsblk` on the host clearly had sda1/sda2/….
+	// Inventory from lsblk -dn (same top-level set operators see) plus a /sys/block
+	// pass so nothing is dropped when lsblk TYPE is blank or a per-disk probe fails.
+	// Deliberately avoid `set -e`: a missing sysfs model file or one bad device
+	// used to abort the whole script and omit later / sibling NVMe names.
 	script := `
-set -euo pipefail
+set -u
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
 # TSV we control (tabs never appear in kernel device names):
 # DISK <name> <size_bytes> <model> <serial> <tran> <type>
@@ -329,54 +357,89 @@ field() { # lsblk -n -o COL /dev/NAME → single line, trimmed
 sys_size_bytes() {
   # /sys/block/*/size is 512-byte sectors
   _s=$(cat "$1/size" 2>/dev/null || echo 0)
-  printf '%s\n' "$((_s * 512))"
+  _s=$(printf '%s' "$_s" | tr -d '[:space:]')
+  [ -n "$_s" ] || _s=0
+  printf '%s\n' "$((_s * 512))" 2>/dev/null || printf '0\n'
 }
-for b in /sys/block/*; do
-  [ -e "$b" ] || continue
-  name=$(basename "$b")
+read_model() {
+  _path="$1"; _sys="$2"
+  _m=$(field MODEL "$_path")
+  if [ -z "$_m" ] && [ -r "$_sys/device/model" ]; then
+    _m=$(tr -d '\0\r\n' <"$_sys/device/model" 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+  fi
+  printf '%s\n' "$_m"
+}
+is_whole() {
+  case "$1" in
+    disk|rom|mpath|md) return 0 ;;
+    raid|raid[0-9]*|raid_*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+declare -A SEEN_DISK=()
+emit_disk() {
+  name="$1"; typ="$2"
   case "$name" in
-    # loop/ram + NVMe multipath controller nodes (nvme0c0n1) — not wipe targets
-    loop*|ram*|zram*|fd*|nvme*c*n*) continue ;;
+    loop*|ram*|zram*|fd*|nvme*c*n*) return 0 ;;
   esac
+  # Already emitted from lsblk or an earlier sysfs pass — keep first copy.
+  [ -n "${SEEN_DISK[$name]+x}" ] && return 0
   path="/dev/$name"
-  # /sys/block can list non-block entries (e.g. nvme0c0n1); never invent a "disk".
-  [ -b "$path" ] || continue
-  typ=$(field TYPE "$path")
-  [ -n "$typ" ] || continue
-  case "$typ" in
-    disk|rom|mpath) ;;
-    *) continue ;;
-  esac
-  size=$(sys_size_bytes "$b")
-  model=$(field MODEL "$path")
-  [ -n "$model" ] || model=$(tr -d '\0\r\n' <"$b/device/model" 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+  [ -b "$path" ] || return 0
+  [ -n "$typ" ] || typ=$(field TYPE "$path")
+  [ -n "$typ" ] || typ=disk
+  is_whole "$typ" || return 0
+  SEEN_DISK[$name]=1
+  b="/sys/block/$name"
+  if [ -d "$b" ]; then
+    size=$(sys_size_bytes "$b")
+  else
+    size=$(field SIZE "$path")
+    size=$(printf '%s' "$size" | tr -d '[:space:]')
+    case "$size" in
+      ''|*[!0-9]*) size=0 ;;
+    esac
+  fi
+  model=$(read_model "$path" "$b")
   serial=$(field SERIAL "$path")
   tran=$(field TRAN "$path")
   printf 'DISK\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$size" "$model" "$serial" "$tran" "$typ"
-  # Partition device dirs live under the disk: sda/sda1, nvme0n1/nvme1n1p1
-  for p in "$b"/"$name"*; do
-    [ -e "$p" ] || continue
-    pname=$(basename "$p")
-    [ "$pname" = "$name" ] && continue
-    ppath="/dev/$pname"
-    [ -b "$ppath" ] || continue
-    ptyp=$(field TYPE "$ppath")
-    [ -n "$ptyp" ] || ptyp=part
-    case "$ptyp" in
-      part|crypt|lvm|md|raid*) ;;
-      *) ptyp=part ;;
-    esac
-    psize=$(sys_size_bytes "$p")
-    printf 'PART\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$name" "$pname" "$psize" \
-      "$(field FSTYPE "$ppath")" \
-      "$(field PARTTYPE "$ppath")" \
-      "$(field PARTLABEL "$ppath")" \
-      "$(field PARTUUID "$ppath")" \
-      "$(field MOUNTPOINT "$ppath")" \
-      "$(field UUID "$ppath")" \
-      "$ptyp"
-  done
+  if [ -d "$b" ]; then
+    for p in "$b"/"$name"*; do
+      [ -e "$p" ] || continue
+      pname=$(basename "$p")
+      [ "$pname" = "$name" ] && continue
+      ppath="/dev/$pname"
+      [ -b "$ppath" ] || continue
+      ptyp=$(field TYPE "$ppath")
+      [ -n "$ptyp" ] || ptyp=part
+      case "$ptyp" in
+        part|crypt|lvm|md|raid|raid[0-9]*|raid_*) ;;
+        *) ptyp=part ;;
+      esac
+      psize=$(sys_size_bytes "$p")
+      printf 'PART\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$name" "$pname" "$psize" \
+        "$(field FSTYPE "$ppath")" \
+        "$(field PARTTYPE "$ppath")" \
+        "$(field PARTLABEL "$ppath")" \
+        "$(field PARTUUID "$ppath")" \
+        "$(field MOUNTPOINT "$ppath")" \
+        "$(field UUID "$ppath")" \
+        "$ptyp"
+    done
+  fi
+}
+# 1) Same top-level set as plain lsblk (disk + md/raid + rom).
+while IFS= read -r name typ; do
+  [ -n "$name" ] || continue
+  emit_disk "$name" "$typ"
+done < <(lsblk -dn -o NAME,TYPE 2>/dev/null || true)
+# 2) Sysfs catch-up: keep any whole disk lsblk omitted (blank TYPE, race, …).
+for b in /sys/block/*; do
+  [ -e "$b" ] || continue
+  name=$(basename "$b")
+  emit_disk "$name" ""
 done
 `
 	raw, err := RunSSH(ctx, h.IP, h.Creds, SudoBashLC(script))
@@ -473,8 +536,8 @@ func parseSysfsListing(raw string) []DiskParts {
 			if len(cols) >= 7 {
 				typ = cols[6]
 			}
-			// Keep rom in the list (marked protected later) so the live medium is visible.
-			if typ != "" && !strings.EqualFold(typ, "disk") && !strings.EqualFold(typ, "rom") && !strings.EqualFold(typ, "mpath") {
+			// Keep rom/md/raid in the list so Host partitions matches plain lsblk.
+			if typ != "" && !isWholeDiskType(typ) {
 				continue
 			}
 			model, serial, tran := "", "", ""

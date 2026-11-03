@@ -116,6 +116,12 @@
 .storage-page .btn:disabled{opacity:.45;cursor:not-allowed}
 .storage-page .hint{font-size:13px;color:var(--ink2);margin-top:8px}
 .storage-page .hint.warn{color:var(--amber)}
+.storage-page .hba-nag{
+  margin:0 0 14px;padding:10px 12px;border-radius:8px;border:1px solid #c9a227;
+  background:#fbf3d8;color:#5c4808;font-size:13.5px;line-height:1.45
+}
+.storage-page .hba-nag[hidden]{display:none !important}
+.storage-page .hba-nag b{font-weight:700}
 .storage-page .cmdprev{font-family:var(--mono);font-size:12.5px;background:var(--slot);color:#d7dde3;padding:8px 10px;border-radius:6px;margin-top:10px;word-break:break-all;white-space:pre-wrap}
 .storage-page .console{margin-top:18px}
 .storage-page .console .head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
@@ -147,6 +153,7 @@
 </header>
 <p class="targets" id="targetsLine"></p>
 <p class="error storage-banner" id="installedCaution" hidden></p>
+<p class="hba-nag" id="hbaOnlyNag" hidden role="status"></p>
 <p id="copper-page-busy" class="flash storage-banner" hidden></p>
 <p class="flash storage-banner" id="storage-flash" hidden></p>
 <p class="error storage-banner" id="storage-error" hidden></p>
@@ -702,14 +709,42 @@
     var b=$("bays"); if(b) b.innerHTML="";
     var a=$("arrays"); if(a) a.innerHTML="";
     setChassisVisible(false);
+    var nag=$("hbaOnlyNag"); if(nag){ nag.hidden=true; nag.innerHTML=""; }
     var load=$("chassisLoading");
     if(load) load.textContent="Loading live controller config over SSH…";
   }
+  function isHBAOnly(){
+    if(!cfg) return false;
+    if(cfg.hba_only) return true;
+    if(String(cfg.mode||"").toUpperCase()==="HBA") return true;
+    var m=String(cfg.model||"");
+    if(/\bHBA\b/i.test(m) && /95\d{2}|94\d{2}|930[05]/i.test(m)) return true;
+    if(/\b9500-\d+[ie]\b/i.test(m)) return true;
+    return false;
+  }
+  function hbaOnlyMessage(){
+    var model=esc((cfg&&cfg.model)||"this adapter");
+    return "<b>"+model+" is an HBA, not a RAID controller.</b> "+
+      "Hardware RAID Create / Mark UGood / VD ops have <b>no chance of succeeding</b> on this card (JBOD/passthrough only). "+
+      "Copper will still run the storcli commands you ask for so you can see the vendor error. "+
+      "Use Soft RAID (mdadm/ZFS/Ceph) on the OS-visible disks, or install a MegaRAID 9560-class controller for hardware RAID.";
+  }
+  function renderHBANag(){
+    var el=$("hbaOnlyNag");
+    if(!el) return;
+    if(!isHBAOnly()){ el.hidden=true; el.innerHTML=""; return; }
+    el.hidden=false;
+    el.innerHTML=hbaOnlyMessage();
+  }
   function render(){
-    if(!cfg){ clearChassis(); return; }
+    if(!cfg){ clearChassis(); renderHBANag(); return; }
     setChassisVisible(true);
-    $("ctlLine").innerHTML = "<b>"+esc(cfg.model||"?")+"</b> · "+esc(cfg.family||"?")+" · slot "+cfg.slot+", sn "+esc(cfg.serial||"—")+", "+esc(cfg.status||"");
-    $("modeLine").textContent = "Controller mode: "+(cfg.mode||"—");
+    var hba=isHBAOnly();
+    $("ctlLine").innerHTML = "<b>"+esc(cfg.model||"?")+"</b> · "+esc(cfg.family||"?")+
+      (hba?' · <b style="color:#9a7b12">HBA (no hardware RAID)</b>':"")+
+      " · slot "+cfg.slot+", sn "+esc(cfg.serial||"—")+", "+esc(cfg.status||"");
+    $("modeLine").textContent = "Controller mode: "+(cfg.mode||"—")+(hba?" · HBA-only adapter":"");
+    renderHBANag();
     renderBays(); renderArrays(); renderActions();
   }
   function renderBays(){
@@ -943,6 +978,10 @@
       var sizes2=Array.from(new Set(list.map(function(a){ return drive(a).size; })));
       var types2=Array.from(new Set(list.map(function(a){ return drive(a).type; })));
       if(sizes2.length>1||types2.length>1){ hint.classList.add("warn"); msg+=" Mixed sizes or media types."; }
+    }
+    if(isHBAOnly()){
+      hint.classList.add("warn");
+      msg+=" WARNING: this adapter is an HBA (e.g. 9500) — not a RAID controller. Create will still be sent to storcli, but hardware RAID cannot succeed. Prefer Soft RAID on JBOD disks.";
     }
     if(batchMode&&batchCompatible) msg+=" Batch: same command on "+SERVER_IDS.length+" servers.";
     if(batchMode&&!batchCompatible){ hint.classList.add("warn"); $("createBtn").disabled=true; $("blinkBtn").disabled=true; if($("setGoodBtn")) $("setGoodBtn").disabled=true; if($("setJbodBtn")) $("setJbodBtn").disabled=true; if($("exposeFreeBtn")) $("exposeFreeBtn").disabled=true; if($("foreignDelBtn")) $("foreignDelBtn").disabled=true; msg=batchBlockedReason||"Batch blocked."; }
@@ -1236,6 +1275,9 @@
       if(isMegaRAID()) body += " MegaRAID planner: clear foreign when needed, bring members to UGood, abort on in-use or mismatched Intf/Med/SeSz.";
     }
     body += " Sizes: "+tokens.map(function(t,i){ return "#"+(i+1)+"="+(t?t+"MB":"rest"); }).join(", ")+".";
+    if(isHBAOnly()){
+      body += "\n\nHBA NOTICE: "+((cfg&&cfg.model)||"This adapter")+" is an HBA (e.g. 9500-8i), not a RAID controller. Copper will still execute the storcli commands, but there is no chance hardware RAID Create will succeed. Use Soft RAID on OS-visible disks instead.";
+    }
     var ok=await confirmLayoutChange(tokens.length>1 ? "Create "+tokens.length+" logical drives?" : "Create logical drive?", body, previewCreatePlan(tokens));
     if(!ok) return;
     await withRun("creating logical drive"+(tokens.length>1?"s":"")+"…", async function(){
