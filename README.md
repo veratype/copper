@@ -6,6 +6,19 @@ Copper is a small toolkit for managing physical (bare-metal) servers. It keeps t
 
 Installing operating systems on physical servers kept going wrong because of network misconfiguration. A common culprit was PortFast being left switched off at the switch. On top of that, we never had a clear, reliable view of which servers we actually had. We looked at Ironic, the usual tool for this job, but its way of doing things didn't suit our setup. So we wrote our own.
 
+## What Copper is, and what it assumes
+
+Copper is an opinionated take on a basic software-defined infrastructure. It exists to help data center admins keep track of their hardware and get an operating system onto a server without a lot of ceremony. Because it is opinionated, it makes a few assumptions about your environment. If they don't match, Copper is probably not the right tool for you.
+
+- **Every server has virtual media.** Copper attaches install images as virtual CDs over Redfish. This has been tested on Supermicro X12 and X13 and on HPE Gen10, Gen11 and Gen12. Other vendors that follow the Redfish virtual media spec may work, but they haven't been tested.
+- **You are in an air-gapped environment.** That is why copper_bmc is a separate agent from the control plane. The agent sits next to the hardware on the OOB network and serves images locally, while the control plane can live somewhere more restricted.
+- **PortFast is off on your switches.** When it is, PXE booting tends to fail or hang on spanning-tree delays. Copper therefore relies on virtual media boot as its primary path. The Data DHCP page still offers PXE settings if your network supports it, but the opinionated path is virtual media.
+- **Provisioning goes through a live OS.** Copper boots the server into a small live image first. From there, admins take over with whatever automation they prefer, such as Ansible. The live image lives in its own repo: https://github.com/veratype/copper-live-image
+- **The target OS is a raw Ubuntu cloud image.** For now Copper only knows how to write Ubuntu cloud images in raw format. qcow2, img and other formats are not supported. If you need extra packages, users or configuration baked in, build a custom raw cloud image and point Copper at it.
+- **Software RAID only.** This is the open-source edition. Hardware RAID controller support is part of the commercial edition. In this version, RAID is handled in software.
+
+  
+
 Copper has two parts.
 
 **copper_bmc** is an agent you run close to the hardware. It works on two networks at once. On the out-of-band (OOB) network, where the BMCs live, it hosts the install images (ISOs) that servers boot from. On the control-plane network, it offers an API that accepts commands. If you switch the option on, it can also hand out IP addresses to BMCs over DHCP.
