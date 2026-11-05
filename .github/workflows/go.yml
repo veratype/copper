@@ -27,3 +27,11 @@ jobs:
 
     # - name: Run Tests
     #  run: go test -v ./...
+    #  Uploads the compiled binaries to the Action run page
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: copper-compiled-binaries
+        path: |
+          copper_bmc/bin/
+          copper_control_plane/bin/
