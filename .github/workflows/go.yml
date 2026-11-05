@@ -37,11 +37,12 @@ jobs:
           copper_bmc/bin/
           copper_control_plane/bin/
     
-    # Only runs when a version tag (v*) is pushed, publishing them directly to the Release Page
-    - name: Upload Binaries to GitHub Release Assets
-      if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: "v0.1.${{ github.run_number }}"
+        name: "Release v0.1.${{ github.run_number }}"
+        generate_release_notes: true
         files: |
           copper_bmc/bin/*
           copper_control_plane/bin/*
