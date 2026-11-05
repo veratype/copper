@@ -1,0 +1,29 @@
+# This workflow will build the Copper golang project using its Makefile
+name: Go Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        # Upgraded to 1.26 to match Copper's system requirements
+        go-version: '1.26'
+
+    # Runs your Makefile target to compile both Linux and Windows binaries
+    - name: Compile with Makefile
+      run: make all
+
+    - name: Run Tests
+      run: go test -v ./...
