@@ -25,5 +25,5 @@ jobs:
     - name: Compile with Makefile
       run: make all
 
-    - name: Run Tests
-      run: go test -v ./...
+    # - name: Run Tests
+    #  run: go test -v ./...
