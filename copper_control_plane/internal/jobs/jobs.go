@@ -17,20 +17,20 @@ import (
 
 // Job type identifiers.
 const (
-	TypeProvisionWrite     = "provision.write"
-	TypeProvisionPreflight = "provision.preflight"
+	TypeProvisionWrite        = "provision.write"
+	TypeProvisionPreflight    = "provision.preflight"
 	TypeStorageDetect         = "storage.detect"
 	TypeStorageConfig         = "storage.config"
 	TypeStorageExec           = "storage.exec"
 	TypeStorageWipePartitions = "storage.wipe-partitions"
 	TypeSoftRAIDScan          = "softraid.scan"
 	TypeSoftRAIDExec          = "softraid.exec"
-	TypeRedfishProbe       = "redfish.probe"
-	TypeRedfishInventory   = "redfish.inventory"
-	TypeRedfishReset       = "redfish.reset"
-	TypeRedfishMount       = "redfish.mount"
-	TypeRedfishConvertUEFI = "redfish.convert-uefi"
-	TypeInventoryClaimNICs = "inventory.claim-nics" // orphan Data DHCP lease → attach MACs to matching server
+	TypeRedfishProbe          = "redfish.probe"
+	TypeRedfishInventory      = "redfish.inventory"
+	TypeRedfishReset          = "redfish.reset"
+	TypeRedfishMount          = "redfish.mount"
+	TypeRedfishConvertUEFI    = "redfish.convert-uefi"
+	TypeInventoryClaimNICs    = "inventory.claim-nics" // orphan Data DHCP lease → attach MACs to matching server
 )
 
 // Status is the lifecycle of one job.
@@ -114,27 +114,38 @@ type EnqueueOpts struct {
 	ServerID   int64
 	ServerName string
 	Payload    any
+	// Timeout bounds handler execution only (after server + executor slots).
+	// Queue wait does not consume this budget; Cancel still aborts while queued.
 	Timeout    time.Duration
 	ImageURL   string
 	TargetDisk string
 }
+
+// Global / power-cycle concurrency caps (mirrored in store.MaxBatch*).
+const (
+	MaxExecutors      = 1000
+	MaxPowerExecutors = 16 // reboot, power on/off, convert-UEFI
+)
 
 // Registry tracks jobs, limits concurrency, and dispatches handlers.
 //
 // Concurrency rules:
 //  1. Same server (ServerID > 0): at most one running job — others wait in queue.
 //  2. Different servers: may run in parallel, capped by SetExecutors (global slots).
+//  3. Power-cycle job types (reset, convert-uefi): additionally capped at MaxPowerExecutors.
 type Registry struct {
-	mu         sync.Mutex
-	jobs       map[string]*Job
-	cancels    map[string]context.CancelFunc
-	handlers   map[string]Handler
-	persist    Persist
-	act        *activity.Buffer
-	limit      int
-	active     int
-	serverBusy map[int64]string // serverID → job id holding the per-server lock
-	wake       chan struct{}
+	mu          sync.Mutex
+	jobs        map[string]*Job
+	cancels     map[string]context.CancelFunc
+	handlers    map[string]Handler
+	persist     Persist
+	act         *activity.Buffer
+	limit       int
+	active      int
+	powerLimit  int
+	powerActive int
+	serverBusy  map[int64]string // serverID → job id holding the per-server lock
+	wake        chan struct{}
 }
 
 // New creates a registry. persist may be nil (memory-only).
@@ -149,6 +160,7 @@ func New(persist Persist, act *activity.Buffer) *Registry {
 		persist:    persist,
 		act:        act,
 		limit:      3,
+		powerLimit: MaxPowerExecutors,
 		serverBusy: map[int64]string{},
 		wake:       make(chan struct{}, 1),
 	}
@@ -171,14 +183,15 @@ func (r *Registry) Register(typ string, h Handler) {
 	r.mu.Unlock()
 }
 
-// SetExecutors caps how many jobs may run across different servers at once (1–16).
+// SetExecutors caps how many jobs may run across different servers at once (1–MaxExecutors).
 // Per-server serialization is always enforced regardless of this limit.
+// Power-cycle jobs are still capped separately at MaxPowerExecutors.
 func (r *Registry) SetExecutors(n int) {
 	if n < 1 {
 		n = 1
 	}
-	if n > 16 {
-		n = 16
+	if n > MaxExecutors {
+		n = MaxExecutors
 	}
 	r.mu.Lock()
 	r.limit = n
@@ -191,6 +204,17 @@ func (r *Registry) Executors() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.limit
+}
+
+// PowerLimitedType reports job types that power-cycle or reboot hosts and therefore
+// use the stricter MaxPowerExecutors concurrency cap.
+func PowerLimitedType(typ string) bool {
+	switch strings.TrimSpace(typ) {
+	case TypeRedfishReset, TypeRedfishConvertUEFI:
+		return true
+	default:
+		return false
+	}
 }
 
 // Enqueue creates a queued job and starts a worker goroutine.
@@ -396,11 +420,12 @@ func matchFilter(job *Job, f ListFilter) bool {
 }
 
 func (r *Registry) run(id string, timeout time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	// Queue wait is cancelable but has no deadline — Settings timeouts apply only
+	// to actual handler work after server + executor slots are acquired.
+	queueCtx, queueCancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
-	r.cancels[id] = cancel
+	r.cancels[id] = queueCancel
 	serverID := int64(0)
 	if job := r.jobs[id]; job != nil {
 		serverID = job.ServerID
@@ -423,9 +448,9 @@ func (r *Registry) run(id string, timeout time.Duration) {
 		}
 	})
 
-	if err := r.acquireServer(ctx, serverID, id); err != nil {
+	if err := r.acquireServer(queueCtx, serverID, id); err != nil {
 		status := StatusError
-		if ctx.Err() == context.Canceled {
+		if queueCtx.Err() == context.Canceled {
 			status = StatusCancelled
 		}
 		r.set(id, func(job *Job) {
@@ -444,9 +469,9 @@ func (r *Registry) run(id string, timeout time.Duration) {
 		job.Log = append(job.Log, "[queued] waiting for executor slot")
 	})
 
-	if err := r.acquire(ctx); err != nil {
+	if err := r.acquire(queueCtx); err != nil {
 		status := StatusError
-		if ctx.Err() == context.Canceled {
+		if queueCtx.Err() == context.Canceled {
 			status = StatusCancelled
 		}
 		r.set(id, func(job *Job) {
@@ -460,6 +485,54 @@ func (r *Registry) run(id string, timeout time.Duration) {
 		return
 	}
 	defer r.release()
+
+	r.mu.Lock()
+	jobType := ""
+	if job := r.jobs[id]; job != nil {
+		jobType = job.Type
+	}
+	r.mu.Unlock()
+	powerLimited := PowerLimitedType(jobType)
+	if powerLimited {
+		r.set(id, func(job *Job) {
+			job.Log = append(job.Log, fmt.Sprintf("[queued] waiting for power-cycle slot (max %d)", MaxPowerExecutors))
+		})
+		if err := r.acquirePower(queueCtx); err != nil {
+			status := StatusError
+			if queueCtx.Err() == context.Canceled {
+				status = StatusCancelled
+			}
+			r.set(id, func(job *Job) {
+				job.FinishedAt = time.Now().UTC()
+				job.Status = status
+				job.Phase = string(status)
+				job.Error = "waiting for power-cycle slot: " + err.Error()
+				job.Log = append(job.Log, "[error] "+job.Error)
+			})
+			r.act.Error("jobs", "job %s power-cycle wait failed: %v", id, err)
+			return
+		}
+		defer r.releasePower()
+	}
+
+	if queueCtx.Err() != nil {
+		r.set(id, func(job *Job) {
+			job.FinishedAt = time.Now().UTC()
+			job.Status = StatusCancelled
+			job.Phase = "cancelled"
+			job.Error = "cancelled while queued"
+			job.Log = append(job.Log, "[error] "+job.Error)
+		})
+		return
+	}
+
+	// Deadline starts here — only the running handler is time-bounded.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	r.mu.Lock()
+	r.cancels[id] = cancel
+	r.mu.Unlock()
+	defer cancel()
+	queueCancel() // drop queue cancel; Cancel() now hits the work context
 
 	r.mu.Lock()
 	h := r.handlers[r.jobs[id].Type]
@@ -613,6 +686,37 @@ func (r *Registry) release() {
 	r.mu.Lock()
 	if r.active > 0 {
 		r.active--
+	}
+	r.mu.Unlock()
+	r.signal()
+}
+
+func (r *Registry) acquirePower(ctx context.Context) error {
+	for {
+		r.mu.Lock()
+		lim := r.powerLimit
+		if lim < 1 {
+			lim = MaxPowerExecutors
+		}
+		if r.powerActive < lim {
+			r.powerActive++
+			r.mu.Unlock()
+			return nil
+		}
+		r.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-r.wake:
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func (r *Registry) releasePower() {
+	r.mu.Lock()
+	if r.powerActive > 0 {
+		r.powerActive--
 	}
 	r.mu.Unlock()
 	r.signal()

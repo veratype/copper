@@ -210,8 +210,18 @@ LIMIT 1`, AgentCmdQueued)
 	}
 
 	delivered := now.UTC()
-	_, err = tx.Exec(`UPDATE agent_commands SET status=?, delivered_at=? WHERE id=? AND status=?`,
-		AgentCmdDelivered, delivered.Format(time.RFC3339Nano), cmd.ID, AgentCmdQueued)
+	// Restart the execution clock at delivery so a command that waited in the
+	// queue (while other concurrent poll workers ran) still gets a full run window.
+	execWindow := cmd.ExpiresAt.Sub(cmd.QueuedAt)
+	if execWindow < time.Minute {
+		execWindow = 3 * time.Minute
+	}
+	if execWindow > 15*time.Minute {
+		execWindow = 15 * time.Minute
+	}
+	newExpiry := delivered.Add(execWindow)
+	_, err = tx.Exec(`UPDATE agent_commands SET status=?, delivered_at=?, expires_at=? WHERE id=? AND status=?`,
+		AgentCmdDelivered, delivered.Format(time.RFC3339Nano), newExpiry.Format(time.RFC3339Nano), cmd.ID, AgentCmdQueued)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +230,7 @@ LIMIT 1`, AgentCmdQueued)
 	}
 	cmd.Status = AgentCmdDelivered
 	cmd.DeliveredAt = delivered
+	cmd.ExpiresAt = newExpiry
 	return cmd, nil
 }
 

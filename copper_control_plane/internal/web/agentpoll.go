@@ -121,13 +121,21 @@ func (s *Server) handleAgentPollNext(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Default long-poll. wait_seconds=0 means non-blocking claim (agent filling
+	// free concurrent workers). Omitted field keeps the 25s default.
 	waitSec := 25
 	var body struct {
-		WaitSeconds int `json:"wait_seconds"`
+		WaitSeconds *int `json:"wait_seconds"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.WaitSeconds > 0 && body.WaitSeconds <= 60 {
-		waitSec = body.WaitSeconds
+	if body.WaitSeconds != nil {
+		waitSec = *body.WaitSeconds
+		if waitSec < 0 {
+			waitSec = 0
+		}
+		if waitSec > 60 {
+			waitSec = 60
+		}
 	}
 
 	deadline := time.Now().Add(time.Duration(waitSec) * time.Second)
@@ -154,7 +162,7 @@ func (s *Server) handleAgentPollNext(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if time.Now().After(deadline) {
+		if waitSec == 0 || time.Now().After(deadline) {
 			writeJSON(w, http.StatusOK, map[string]any{"command": nil})
 			return
 		}

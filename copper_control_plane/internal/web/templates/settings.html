@@ -46,9 +46,9 @@
     </label>
 
     <h2>Batch executors</h2>
-    <p class="muted">How many servers to process at once (Probe, Inventory, Mount, Detect RAID, and <strong>Deploy OS</strong> writes). Default 3; hard max 16. Raising this for Deploy can saturate the data-media NIC while hosts download the cloud image.</p>
+    <p class="muted">How many servers to process at once (Probe, Inventory, Mount, Detect RAID, and <strong>Deploy OS</strong> writes). Default 3; hard max 1000. <strong>Power on / off, Reboot, and Convert to UEFI</strong> are always capped at 16 in parallel (with a UI warning) so a high inventory setting cannot stampede power-cycles. Raising this for Deploy can saturate the data-media NIC while hosts download the cloud image.</p>
     <label>Parallel executors
-      <input name="executors" type="number" min="1" max="16" required value="{{.BatchRuntime.Executors}}">
+      <input name="executors" type="number" min="1" max="1000" required value="{{.BatchRuntime.Executors}}">
     </label>
 
     <h2>Agent watch</h2>

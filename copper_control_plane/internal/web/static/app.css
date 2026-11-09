@@ -744,8 +744,7 @@ code.data-ip {
 .float-log.is-minimized {
   max-height: none;
 }
-.float-log.is-minimized .float-log-body,
-.float-log.is-minimized .float-log-status {
+.float-log.is-minimized .float-log-body {
   display: none;
 }
 .float-log-head {
@@ -768,11 +767,6 @@ code.data-ip {
   padding: 0.3rem 0.55rem;
   font-size: 0.8rem;
 }
-.float-log-status {
-  margin: 0;
-  padding: 0.35rem 0.75rem 0;
-  font-size: 0.8rem;
-}
 .float-log-body {
   flex: 1;
   overflow: auto;
@@ -790,6 +784,16 @@ code.data-ip {
   word-break: break-word;
 }
 .float-log-body .log-line { margin: 0; }
+.float-log-body .float-log-status {
+  color: #9ecbff;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(232, 238, 246, 0.12);
+}
+.float-log-body .float-log-status.is-error,
+.float-log-body .float-log-status.level-error {
+  color: #ff8a65;
+}
 .float-log-body .level-warn { color: #ffb088; }
 .float-log-body .level-error { color: #ff8a65; }
 .float-log-body .level-local { color: #9ecbff; }

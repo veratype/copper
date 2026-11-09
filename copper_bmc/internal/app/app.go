@@ -143,6 +143,7 @@ func printBanner(cfg *config.Config, act *activity.Buffer) {
 		fmt.Printf("    url    : %s\n", cfg.ControlPlaneURL)
 		fmt.Println("    posts : /api/agent/poll/heartbeat")
 		fmt.Println("    polls : /api/agent/poll/commands/next")
+		fmt.Printf("    workers: up to %d concurrent commands (same Handler as listen mode)\n", poll.MaxWorkers)
 		fmt.Println("    note  : command API listen port is not opened")
 		fmt.Println()
 	} else {

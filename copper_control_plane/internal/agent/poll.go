@@ -77,31 +77,46 @@ func (p *PollBridge) EnqueueAndWait(method, path string, headers map[string]stri
 		return 0, nil, fmt.Errorf("enqueue agent command: %w", err)
 	}
 
-	timer := time.NewTimer(wait + 2*time.Second)
-	defer timer.Stop()
-	select {
-	case res := <-ch:
-		if res.Err != "" && res.StatusCode == 0 {
-			return 0, nil, fmt.Errorf("%s", res.Err)
+	// Wait until the command's expires_at (refreshed on delivery for concurrent
+	// poll workers) plus a small grace — not a fixed clock from enqueue alone.
+	deadline := now.Add(wait + 2*time.Second)
+	for {
+		remain := time.Until(deadline)
+		if remain < 0 {
+			remain = 0
 		}
-		return res.StatusCode, res.Body, nil
-	case <-timer.C:
-		// Prefer DB state if agent completed just as we timed out.
-		if got, gErr := p.Store.GetAgentCommand(id); gErr == nil && got != nil {
-			switch got.Status {
-			case store.AgentCmdDone, store.AgentCmdError:
-				if got.ResultError != "" && got.ResultStatus == 0 {
-					return 0, nil, fmt.Errorf("%s", got.ResultError)
-				}
-				return got.ResultStatus, got.ResultBody, nil
-			case store.AgentCmdExpired:
-				return 0, nil, fmt.Errorf("agent did not complete command before %s (queued_at=%s)",
-					got.ExpiresAt.Format(time.RFC3339), got.QueuedAt.Format(time.RFC3339))
+		timer := time.NewTimer(remain)
+		select {
+		case res := <-ch:
+			timer.Stop()
+			if res.Err != "" && res.StatusCode == 0 {
+				return 0, nil, fmt.Errorf("%s", res.Err)
 			}
+			return res.StatusCode, res.Body, nil
+		case <-timer.C:
+			got, gErr := p.Store.GetAgentCommand(id)
+			if gErr == nil && got != nil {
+				switch got.Status {
+				case store.AgentCmdDone, store.AgentCmdError:
+					if got.ResultError != "" && got.ResultStatus == 0 {
+						return 0, nil, fmt.Errorf("%s", got.ResultError)
+					}
+					return got.ResultStatus, got.ResultBody, nil
+				case store.AgentCmdExpired:
+					return 0, nil, fmt.Errorf("agent did not complete command before %s (queued_at=%s)",
+						got.ExpiresAt.Format(time.RFC3339), got.QueuedAt.Format(time.RFC3339))
+				case store.AgentCmdDelivered, store.AgentCmdQueued:
+					// Delivery restarts expires_at; keep waiting through the new window.
+					if !got.ExpiresAt.IsZero() && got.ExpiresAt.After(deadline) {
+						deadline = got.ExpiresAt.Add(2 * time.Second)
+						continue
+					}
+				}
+			}
+			_ = p.Store.CompleteAgentCommand(id, 0, nil, "waiter timed out", time.Now().UTC())
+			return 0, nil, fmt.Errorf("agent did not poll in time (queued at %s, waited %s)",
+				now.Format(time.RFC3339), wait)
 		}
-		_ = p.Store.CompleteAgentCommand(id, 0, nil, "waiter timed out", time.Now().UTC())
-		return 0, nil, fmt.Errorf("agent did not poll in time (queued at %s, waited %s)",
-			now.Format(time.RFC3339), wait)
 	}
 }
 

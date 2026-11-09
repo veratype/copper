@@ -173,7 +173,8 @@ func (s *Server) handleAPIBatchSettings(w http.ResponseWriter, _ *http.Request) 
 		"ok":       true,
 		"settings": rt,
 		"limits": map[string]any{
-			"max_executors": store.MaxBatchExecutors,
+			"max_executors":       store.MaxBatchExecutors,
+			"max_power_executors": store.MaxPowerBatchExecutors,
 		},
 	})
 }

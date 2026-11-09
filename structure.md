@@ -58,7 +58,7 @@ Copper deliberately splits networks:
 1. **OOB / BMC plane** — BMCs reach `copper_bmc` media (ISO download) and optional OOB DHCPv4 on the agent.
 2. **Control-plane plane** — two talk modes:
    - **listen** (default) — CP dials `copper_bmc` command API; credentials stay in the control plane and are sent per request (`X-Copper-BMC-*` headers).
-   - **poll** — `copper_bmc` dials CP (`/api/agent/poll/*`): heartbeat updates a last-known cache (`as_of` / `last_seen_at`), long-polls for enqueued commands, posts results. Same Redfish handlers run in-process on the agent; CP never opens `:9090`.
+   - **poll** — `copper_bmc` dials CP (`/api/agent/poll/*`): heartbeat updates a last-known cache (`as_of` / `last_seen_at`), long-polls for enqueued commands, posts results. Same in-process command `Handler` as listen mode runs with up to 1000 concurrent workers (fills free slots with non-blocking claims); CP never opens `:9090`. Power-cycle concurrency is still capped at 16 in the CP job registry.
 3. **Data NIC plane** — Host PXE DHCP runs **inside** `copper_control_plane` (not on the agent), with next-server + boot-file.
 
 ---
@@ -202,10 +202,11 @@ Thin HTTP wrapper: attaches BMC headers from a `store.Server`, calls the same `/
 
 Background work (probe, inventory, reset, mount, RAID `storage.detect` / `storage.config` / `storage.exec` / `storage.wipe-partitions`, provision preflight/write, inventory claim-nics) goes through an **in-process job registry**, not a separate broker.
 
-**Two hard rules**
+**Three hard rules**
 
 1. **Same baremetal (`ServerID`) → serialize.** At most one running op per server. Probe then RAID on server1 must queue; they never overlap.
-2. **Different baremetals → parallel.** Server1 and server2 may run at once (OS install, partition scan, RAID, Redfish), capped by a global executor limit (settings / `SetExecutors`, default 3).
+2. **Different baremetals → parallel.** Server1 and server2 may run at once (OS install, partition scan, RAID, Redfish), capped by a global executor limit (settings / `SetExecutors`, default 3, hard max 1000).
+3. **Power-cycle jobs → extra cap.** `redfish.reset` and `redfish.convert-uefi` are additionally limited to 16 concurrent (UI warns on batch); Settings executors above 16 still apply to Inventory/Probe/etc.
 
 **How it works**
 

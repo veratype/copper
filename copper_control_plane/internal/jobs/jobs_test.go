@@ -393,3 +393,150 @@ func TestBusyServers(t *testing.T) {
 		t.Fatal("BusyServers should return a copy")
 	}
 }
+
+func TestPowerCycleConcurrencyCap(t *testing.T) {
+	reg := New(nil, nil)
+	reg.SetExecutors(100) // well above MaxPowerExecutors
+
+	var mu sync.Mutex
+	running := 0
+	maxRunning := 0
+	release := make(chan struct{})
+	started := make(chan struct{}, MaxPowerExecutors+5)
+
+	reg.Register(TypeRedfishReset, func(ctx context.Context, job *Job, progress Progress) error {
+		mu.Lock()
+		running++
+		if running > maxRunning {
+			maxRunning = running
+		}
+		mu.Unlock()
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			mu.Lock()
+			running--
+			mu.Unlock()
+			return ctx.Err()
+		}
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return nil
+	})
+
+	const n = 24
+	for i := 1; i <= n; i++ {
+		if _, err := reg.Enqueue(EnqueueOpts{
+			Type: TypeRedfishReset, ServerID: int64(i), ServerName: "s",
+			Timeout: time.Minute,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := 0; i < MaxPowerExecutors; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only got %d power-cycle starters, want %d", i, MaxPowerExecutors)
+		}
+	}
+	// No 17th should start while first 16 hold.
+	select {
+	case <-started:
+		t.Fatal("17th power-cycle job started — cap violated")
+	case <-time.After(200 * time.Millisecond):
+	}
+	mu.Lock()
+	mr := maxRunning
+	mu.Unlock()
+	if mr > MaxPowerExecutors {
+		t.Fatalf("maxRunning=%d want <= %d", mr, MaxPowerExecutors)
+	}
+	close(release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		list := reg.List(ListFilter{Limit: n + 5})
+		okN := 0
+		for _, j := range list {
+			if j.Type == TypeRedfishReset && j.Status == StatusOK {
+				okN++
+			}
+		}
+		if okN >= n {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("power-cycle jobs did not complete")
+}
+
+// Queue wait must not consume the job timeout — only time after the executor starts.
+func TestTimeoutStartsAfterExecutor(t *testing.T) {
+	reg := New(nil, nil)
+	reg.SetExecutors(1)
+
+	hold := make(chan struct{})
+	started1 := make(chan struct{})
+	reg.Register("test.work", func(ctx context.Context, job *Job, progress Progress) error {
+		if job.ServerID == 1 {
+			close(started1)
+			select {
+			case <-hold:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		}
+		// Job 2: short work after a long queue wait; must still see a fresh deadline.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(30 * time.Millisecond):
+			return nil
+		}
+	})
+
+	short := 200 * time.Millisecond
+	if _, err := reg.Enqueue(EnqueueOpts{Type: "test.work", ServerID: 1, ServerName: "s1", Timeout: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job1 did not start")
+	}
+
+	j2, err := reg.Enqueue(EnqueueOpts{Type: "test.work", ServerID: 2, ServerName: "s2", Timeout: short})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the only executor longer than j2's timeout while j2 stays queued.
+	time.Sleep(short + 150*time.Millisecond)
+	got, ok := reg.Get(j2.ID)
+	if !ok {
+		t.Fatal("job2 missing")
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("job2 status=%s want queued while waiting for executor", got.Status)
+	}
+
+	close(hold)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ = reg.Get(j2.ID)
+		if got != nil && got.Status == StatusOK {
+			return
+		}
+		if got != nil && (got.Status == StatusError || got.Status == StatusCancelled) {
+			t.Fatalf("job2 failed after queue wait: status=%s err=%s (timeout must not count queue time)", got.Status, got.Error)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("job2 did not complete")
+}

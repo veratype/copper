@@ -24,7 +24,8 @@ const (
 	settingSession      = "session"           // web UI sign-in timeout
 
 	DefaultBatchExecutors          = 3
-	MaxBatchExecutors              = 16
+	MaxBatchExecutors              = 1000 // Inventory / probe / detect / deploy, etc.
+	MaxPowerBatchExecutors         = 16   // Reboot / power on|off / convert-UEFI (power-cycle)
 	DefaultTimeoutInventorySeconds = 180
 	DefaultTimeoutRebootSeconds    = 60
 	DefaultTimeoutMountSeconds     = 600 // includes wait for live OS DHCP+SSH NIC claim
@@ -40,7 +41,6 @@ const (
 	DefaultSessionTimeoutHours     = 12
 	MinSessionTimeoutHours         = 1
 	MaxSessionTimeoutHours         = 720 // 30 days
-
 
 	// StatusDeclared = imported / known credentials, not yet matched to live OOB discovery.
 	StatusDeclared = "declared"

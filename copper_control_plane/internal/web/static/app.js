@@ -2284,24 +2284,55 @@ window.CopperHostPartitions = (function () {
       if (floatLog) floatLog.hidden = false;
     }
 
+    function ensureFloatStatus() {
+      if (!floatBody) return null;
+      if (floatStatus && floatStatus.parentNode === floatBody) return floatStatus;
+      floatStatus = document.getElementById("float-log-status");
+      if (floatStatus && floatStatus.parentNode === floatBody) return floatStatus;
+      floatStatus = document.createElement("div");
+      floatStatus.id = "float-log-status";
+      floatStatus.className = "float-log-status log-line";
+      floatStatus.textContent = "idle";
+      floatBody.insertBefore(floatStatus, floatBody.firstChild);
+      return floatStatus;
+    }
+
+    function trimFloatLines() {
+      if (!floatBody) return;
+      var lines = floatBody.querySelectorAll(".log-line:not(.float-log-status)");
+      while (lines.length > 400) {
+        floatBody.removeChild(lines[0]);
+        lines = floatBody.querySelectorAll(".log-line:not(.float-log-status)");
+      }
+    }
+
     function appendLocal(msg, level) {
       showFloat();
       if (!floatBody) return;
+      ensureFloatStatus();
       var line = document.createElement("div");
       line.className = "log-line level-" + (level || "local");
       var t = new Date().toISOString().replace("T", " ").replace("Z", "Z");
       line.textContent = t + "  [batch]  " + msg;
       floatBody.appendChild(line);
-      while (floatBody.childNodes.length > 400) {
-        floatBody.removeChild(floatBody.firstChild);
-      }
+      trimFloatLines();
       floatBody.scrollTop = floatBody.scrollHeight;
     }
 
     function setFloatStatus(text, isError) {
-      if (!floatStatus) return;
-      floatStatus.textContent = text;
-      floatStatus.classList.toggle("is-error", !!isError);
+      showFloat();
+      var el = ensureFloatStatus();
+      if (!el) return;
+      el.textContent = text;
+      el.classList.toggle("is-error", !!isError);
+      el.classList.toggle("level-error", !!isError);
+    }
+
+    function clearFloatBody() {
+      if (!floatBody) return;
+      floatBody.textContent = "";
+      floatStatus = null;
+      setFloatStatus("idle", false);
     }
 
     function startActivityFeed() {
@@ -2321,6 +2352,7 @@ window.CopperHostPartitions = (function () {
             var events = body.events || [];
             events.forEach(function (ev) {
               if (!floatBody) return;
+              ensureFloatStatus();
               var line = document.createElement("div");
               line.className = "log-line level-" + (ev.level || "info");
               var t = ev.time ? String(ev.time).replace("T", " ").replace("Z", "Z") : "";
@@ -2329,9 +2361,7 @@ window.CopperHostPartitions = (function () {
               floatBody.appendChild(line);
             });
             if (events.length && floatBody) {
-              while (floatBody.childNodes.length > 400) {
-                floatBody.removeChild(floatBody.firstChild);
-              }
+              trimFloatLines();
               floatBody.scrollTop = floatBody.scrollHeight;
             }
             if (typeof body.next_since === "number" && body.next_since > activitySince) {
@@ -2394,6 +2424,7 @@ window.CopperHostPartitions = (function () {
       return {
         executors: 3,
         timeouts: { inventory: 180, reboot: 60, mount: 180, probe: 60, delete: 30, detect: 90 },
+        limits: { max_executors: 1000, max_power_executors: 16 },
       };
     }
 
@@ -2404,7 +2435,9 @@ window.CopperHostPartitions = (function () {
             if (!resp.ok || !body.ok || !body.settings) {
               throw new Error((body && body.error) || "settings unavailable");
             }
-            return body.settings;
+            var s = body.settings;
+            s.limits = body.limits || defaultBatchSettings().limits;
+            return s;
           });
         })
         .catch(function () {
@@ -2412,13 +2445,40 @@ window.CopperHostPartitions = (function () {
         });
     }
 
+    function isPowerCycleAction(action) {
+      return (
+        action === "reboot" ||
+        action === "power-on" ||
+        action === "power-off" ||
+        action === "convert-uefi"
+      );
+    }
+
+    function powerCycleWarn(n, actionLabel) {
+      return (
+        actionLabel +
+        " " +
+        n +
+        " selected server(s)?\n\n" +
+        "Power-cycle actions run at most 16 at a time (even if Settings executors are higher), " +
+        "so a large inventory concurrency setting cannot stampede BMC resets."
+      );
+    }
+
     function refreshRuntimeHint() {
       loadBatchSettings().then(function (s) {
         if (!runtimeHint) return;
+        var maxE = (s.limits && s.limits.max_executors) || 1000;
+        var maxP = (s.limits && s.limits.max_power_executors) || 16;
         runtimeHint.innerHTML =
           '<a href="/settings">Settings</a>' +
           " · executors " +
           s.executors +
+          " (max " +
+          maxE +
+          "; power-cycle ≤" +
+          maxP +
+          ")" +
           " · timeouts inv/reboot/mount/probe " +
           s.timeouts.inventory +
           "/" +
@@ -2532,7 +2592,12 @@ window.CopperHostPartitions = (function () {
       updateCount();
       startActivityFeed();
       var settings = await loadBatchSettings();
-      var executors = Math.max(1, Math.min(settings.executors || 3, 16));
+      var maxExec = (settings.limits && settings.limits.max_executors) || 1000;
+      var maxPower = (settings.limits && settings.limits.max_power_executors) || 16;
+      var executors = Math.max(1, Math.min(settings.executors || 3, maxExec));
+      if (isPowerCycleAction(action)) {
+        executors = Math.min(executors, maxPower);
+      }
       appendLocal(
         "queueing " +
           label +
@@ -2540,6 +2605,7 @@ window.CopperHostPartitions = (function () {
           selected.length +
           " server(s) · submit pool ×" +
           executors +
+          (isPowerCycleAction(action) ? " (power-cycle cap " + maxPower + ")" : "") +
           " (jobs continue in background)",
         "local"
       );
@@ -2763,7 +2829,7 @@ window.CopperHostPartitions = (function () {
     if (btnPowerOn) {
       btnPowerOn.addEventListener("click", function () {
         var n = selectedChecks().length;
-        if (!window.confirm("Power on " + n + " selected server(s)?")) return;
+        if (!window.confirm(powerCycleWarn(n, "Power on"))) return;
         runBatch("power on", "power-on", function (id) {
           return postJobTrack("/api/servers/" + id + "/actions/reset", {
             reset_type: "On",
@@ -2791,7 +2857,7 @@ window.CopperHostPartitions = (function () {
         var n = selectedChecks().length;
         if (
           !window.confirm(
-            "Power off " + n + " selected server(s)?\nUses ForceOff (immediate)."
+            powerCycleWarn(n, "Power off") + "\nUses ForceOff (immediate)."
           )
         ) {
           return;
@@ -2808,7 +2874,7 @@ window.CopperHostPartitions = (function () {
     if (btnReboot) {
       btnReboot.addEventListener("click", function () {
         var n = selectedChecks().length;
-        if (!window.confirm("Reboot " + n + " selected server(s)?")) return;
+        if (!window.confirm(powerCycleWarn(n, "Reboot"))) return;
         if (!confirmInstalledThen("Reboot")) return;
         runBatch("reboot", "reboot", function (id) {
           return postJobTrack("/api/servers/" + id + "/actions/reset", {
@@ -2823,10 +2889,8 @@ window.CopperHostPartitions = (function () {
         var n = selectedChecks().length;
         if (
           !window.confirm(
-            "Convert " +
-              n +
-              " selected server(s) to persistent BIOS UEFI mode and reboot?\n\n" +
-              "Supermicro may require SFT-DCMS / OOB license for BIOS Redfish; " +
+            powerCycleWarn(n, "Convert to UEFI and reboot") +
+              "\n\nSupermicro may require SFT-DCMS / OOB license for BIOS Redfish; " +
               "if rejected, set Boot Mode in the BIOS UI."
           )
         ) {
@@ -3215,7 +3279,7 @@ window.CopperHostPartitions = (function () {
 
     if (floatClear) {
       floatClear.addEventListener("click", function () {
-        if (floatBody) floatBody.textContent = "";
+        clearFloatBody();
       });
     }
     if (floatToggle) {
