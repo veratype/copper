@@ -58,6 +58,12 @@ func run() error {
 	}
 	defer st.Close()
 
+	if n, err := st.BackfillHardwareFactsFromSnapshots(); err != nil {
+		log.Printf("hardware facts: backfill from inventory snapshots: %v", err)
+	} else if n > 0 {
+		log.Printf("hardware facts: rebuilt for %d server(s) from cached inventory", n)
+	}
+
 	_ = st.SetSetting("agent_mode", cfg.AgentMode)
 	_ = st.SetSetting("copper_bmc_host", cfg.CopperBMCHost)
 	_ = st.SetSetting("copper_bmc_port", fmt.Sprintf("%d", cfg.CopperBMCPort))

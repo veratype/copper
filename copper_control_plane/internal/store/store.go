@@ -68,6 +68,9 @@ type Server struct {
 	// Labels are optional admin tags (zero or more). Not stored on the servers row;
 	// filled from labels / server_labels by ListServers / GetServer.
 	Labels []string
+	// Hardware is a deduped inventory summary (CPU/RAM/GPU/storage/NIC/PSU).
+	// Not a free-form label; filled from server_hw_facts by ListServers / GetServer.
+	Hardware *HardwareFacts
 	// Optional planned OS identity/network for Deploy (cidata). Non-empty values
 	// win over /deploy form input when expanding per-host cloud-init.
 	ProvisionedHostname string // FQDN / short hostname for installed OS
@@ -203,6 +206,9 @@ CREATE TABLE IF NOT EXISTS jobs (
 		return err
 	}
 	if err := s.migrateLabels(); err != nil {
+		return err
+	}
+	if err := s.migrateHardwareFacts(); err != nil {
 		return err
 	}
 	return nil
@@ -580,6 +586,9 @@ func (s *Store) ListServers() ([]Server, error) {
 	if err := s.attachLabels(out); err != nil {
 		return nil, err
 	}
+	if err := s.attachHardwareFacts(out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -599,6 +608,11 @@ func (s *Store) GetServer(id int64) (*Server, error) {
 	srv.Labels = labels
 	if srv.Labels == nil {
 		srv.Labels = []string{}
+	}
+	if hw, err := s.GetHardwareFacts(srv.ID); err != nil {
+		return nil, err
+	} else {
+		srv.Hardware = hw
 	}
 	return &srv, nil
 }
@@ -776,6 +790,7 @@ func (s *Store) BindFromLease(srv *Server, mac, ip string) (changed bool, err er
 func (s *Store) DeleteServer(id int64) error {
 	_, _ = s.db.Exec(`DELETE FROM snapshots WHERE server_id=?`, id)
 	_, _ = s.db.Exec(`DELETE FROM server_labels WHERE server_id=?`, id)
+	_, _ = s.db.Exec(`DELETE FROM server_hw_facts WHERE server_id=?`, id)
 	_, err := s.db.Exec(`DELETE FROM servers WHERE id=?`, id)
 	return err
 }

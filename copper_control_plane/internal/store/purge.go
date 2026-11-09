@@ -15,6 +15,7 @@ func (s *Store) PurgeInventoryAndDHCP() error {
 
 	stmts := []string{
 		`DELETE FROM server_labels`,
+		`DELETE FROM server_hw_facts`,
 		`DELETE FROM snapshots`,
 		`DELETE FROM servers`,
 		`DELETE FROM labels`,

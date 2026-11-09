@@ -16,7 +16,7 @@
 
   <form class="filter-bar" id="servers-filter" method="get" action="/">
     <label class="filter-q">Search
-      <input type="search" name="q" value="{{.FilterQ}}" placeholder="name, chassis, MAC, label…" autocomplete="off">
+      <input type="search" name="q" value="{{.FilterQ}}" placeholder="name, chassis, MAC, label, CPU…" autocomplete="off">
     </label>
     <label class="filter-status">Status
       <select name="status">
@@ -38,6 +38,48 @@
       </div>
     </fieldset>
     {{end}}
+    <fieldset class="filter-hardware">
+      <legend>Hardware <span class="muted">(from inventory · AND)</span></legend>
+      <div class="filter-hw-grid">
+        <label>CPU type
+          <input type="text" name="cpu" value="{{.FilterHW.CPUType}}" placeholder="Xeon, EPYC…" autocomplete="off">
+        </label>
+        <label>Min CPUs
+          <input type="number" name="cpu_min" min="0" value="{{if .FilterHW.CPUMin}}{{.FilterHW.CPUMin}}{{end}}" placeholder="e.g. 2">
+        </label>
+        <label>Min RAM (GiB)
+          <input type="number" name="ram_min" min="0" value="{{if .FilterHW.RAMGiBMin}}{{.FilterHW.RAMGiBMin}}{{end}}" placeholder="e.g. 128">
+        </label>
+        <label>Max RAM (GiB)
+          <input type="number" name="ram_max" min="0" value="{{if .FilterHW.RAMGiBMax}}{{.FilterHW.RAMGiBMax}}{{end}}" placeholder="">
+        </label>
+        <label>GPU
+          <select name="gpu">
+            <option value="" {{if eq .FilterHW.GPU ""}}selected{{end}}>Any</option>
+            <option value="any" {{if or (eq .FilterHW.GPU "any") (eq .FilterHW.GPU "yes") (eq .FilterHW.GPU "1")}}selected{{end}}>Has GPU</option>
+            <option value="none" {{if or (eq .FilterHW.GPU "none") (eq .FilterHW.GPU "no") (eq .FilterHW.GPU "0")}}selected{{end}}>No GPU</option>
+          </select>
+        </label>
+        <label>GPU type
+          <input type="text" name="gpu_type" value="{{.FilterHW.GPUType}}" placeholder="A100, H100…" autocomplete="off">
+        </label>
+        <label>Min NICs
+          <input type="number" name="nic_min" min="0" value="{{if .FilterHW.NICMin}}{{.FilterHW.NICMin}}{{end}}" placeholder="">
+        </label>
+        <label>Min PSUs
+          <input type="number" name="psu_min" min="0" value="{{if .FilterHW.PSUMin}}{{.FilterHW.PSUMin}}{{end}}" placeholder="">
+        </label>
+        <label>Min HDDs
+          <input type="number" name="hdd_min" min="0" value="{{if .FilterHW.HDDMin}}{{.FilterHW.HDDMin}}{{end}}" placeholder="">
+        </label>
+        <label>Min NVMe
+          <input type="number" name="nvme_min" min="0" value="{{if .FilterHW.NVMeMin}}{{.FilterHW.NVMeMin}}{{end}}" placeholder="">
+        </label>
+        <label>Min SSDs
+          <input type="number" name="ssd_min" min="0" value="{{if .FilterHW.SSDMin}}{{.FilterHW.SSDMin}}{{end}}" placeholder="any SSD/NVMe">
+        </label>
+      </div>
+    </fieldset>
     <div class="filter-actions">
       <button type="submit" class="btn">Filter</button>
       {{if .FilterActive}}<a class="btn ghost" href="/">Clear</a>{{end}}
@@ -108,9 +150,16 @@
   <table id="servers-table">
     <thead>
       <tr>
+        <th class="col-num">#</th>
         <th class="col-check"></th>
         <th>Name</th>
         <th>Labels</th>
+        <th>CPU</th>
+        <th>RAM</th>
+        <th>Storage</th>
+        <th>NICs</th>
+        <th>GPU</th>
+        <th>PSU</th>
         <th>Status</th>
         <th>Data IP</th>
         <th>RAID</th>
@@ -122,23 +171,24 @@
       </tr>
     </thead>
     <tbody>
-      {{range .Servers}}
-      <tr data-server-id="{{.ID}}"
-          data-server-name="{{.Name}}"
-          data-status="{{.Status}}"
-          data-endpoint="{{.Endpoint}}"
-          data-data-ip="{{index $.DataIPs .ID}}"
-          data-raid="{{index $.RaidFamily .ID}}"
-          data-labels="{{range $i, $l := .Labels}}{{if $i}},{{end}}{{$l}}{{end}}">
+      {{range $i, $srv := .Servers}}
+      <tr data-server-id="{{$srv.ID}}"
+          data-server-name="{{$srv.Name}}"
+          data-status="{{$srv.Status}}"
+          data-endpoint="{{$srv.Endpoint}}"
+          data-data-ip="{{index $.DataIPs $srv.ID}}"
+          data-raid="{{index $.RaidFamily $srv.ID}}"
+          data-labels="{{range $j, $l := $srv.Labels}}{{if $j}},{{end}}{{$l}}{{end}}">
+        <td class="col-num muted">{{add $i 1}}</td>
         <td class="col-check">
           <input type="checkbox" class="batch-check"
-                 value="{{.ID}}"
-                 data-name="{{.Name}}"
-                 data-status="{{.Status}}"
-                 data-endpoint="{{.Endpoint}}"
-                 data-data-ip="{{index $.DataIPs .ID}}"
-                 data-raid="{{index $.RaidFamily .ID}}"
-                 data-labels="{{range $i, $l := .Labels}}{{if $i}},{{end}}{{$l}}{{end}}"
+                 value="{{$srv.ID}}"
+                 data-name="{{$srv.Name}}"
+                 data-status="{{$srv.Status}}"
+                 data-endpoint="{{$srv.Endpoint}}"
+                 data-data-ip="{{index $.DataIPs $srv.ID}}"
+                 data-raid="{{index $.RaidFamily $srv.ID}}"
+                 data-labels="{{range $j, $l := $srv.Labels}}{{if $j}},{{end}}{{$l}}{{end}}"
                  title="Select for batch actions">
         </td>
         <td>
@@ -149,50 +199,83 @@
                       stroke-linecap="round" stroke-dasharray="40 56"/>
             </svg>
           </span>
-          <a href="/servers/{{.ID}}">{{.Name}}</a>
+          <a href="/servers/{{$srv.ID}}">{{$srv.Name}}</a>
           <span class="row-msg muted" hidden></span>
         </td>
         <td class="labels-cell">
-          {{if .Labels}}
+          {{if $srv.Labels}}
           <span class="label-chip-row">
-            {{range .Labels}}<span class="badge badge-label{{if eq . "installed"}} badge-installed{{end}}">{{.}}</span>{{end}}
+            {{range $srv.Labels}}<span class="badge badge-label{{if eq . "installed"}} badge-installed{{end}}">{{.}}</span>{{end}}
           </span>
           {{else}}
           <span class="muted">—</span>
           {{end}}
         </td>
+        {{if $srv.Hardware}}
+        <td class="hw-cell" title="{{$srv.Hardware.CPUSummary}}">
+          {{if $srv.Hardware.CPUSummary}}<span class="badge badge-hw">{{$srv.Hardware.CPUSummary}}</span>{{else}}<span class="muted">—</span>{{end}}
+        </td>
+        <td class="hw-cell">
+          {{if $srv.Hardware.RAMSummary}}<span class="badge badge-hw">{{$srv.Hardware.RAMSummary}}</span>{{else}}<span class="muted">—</span>{{end}}
+        </td>
+        <td class="hw-cell" title="{{$srv.Hardware.StorageSummary}}">
+          {{if $srv.Hardware.Storage}}
+          <span class="label-chip-row hw-chip-row">
+            {{range $srv.Hardware.Storage}}<span class="badge badge-hw">{{.Key}}×{{.Count}}</span>{{end}}
+          </span>
+          {{else}}
+          <span class="muted">—</span>
+          {{end}}
+        </td>
+        <td class="hw-cell">
+          {{if $srv.Hardware.NICCount}}<span class="badge badge-hw">×{{$srv.Hardware.NICCount}}</span>{{else}}<span class="muted">—</span>{{end}}
+        </td>
+        <td class="hw-cell" title="{{$srv.Hardware.GPUSummary}}">
+          {{if $srv.Hardware.HasGPU}}<span class="badge badge-hw">{{$srv.Hardware.GPUSummary}}</span>{{else}}<span class="muted">—</span>{{end}}
+        </td>
+        <td class="hw-cell">
+          {{if $srv.Hardware.PSUCount}}<span class="badge badge-hw">×{{$srv.Hardware.PSUCount}}</span>{{else}}<span class="muted">—</span>{{end}}
+        </td>
+        {{else}}
+        <td class="hw-cell muted" title="Run Inventory to fill hardware facts">—</td>
+        <td class="hw-cell muted">—</td>
+        <td class="hw-cell muted">—</td>
+        <td class="hw-cell muted">—</td>
+        <td class="hw-cell muted">—</td>
+        <td class="hw-cell muted">—</td>
+        {{end}}
         <td>
-          {{if eq .Status "declared"}}
+          {{if eq $srv.Status "declared"}}
           <span class="badge badge-declared">declared</span>
           {{else}}
           <span class="badge badge-bound">bound</span>
           {{end}}
-          {{if eq .Source "import"}}<span class="muted"> · csv</span>{{end}}
+          {{if eq $srv.Source "import"}}<span class="muted"> · csv</span>{{end}}
         </td>
         <td class="data-ip-cell" title="Live Data DHCP lease — SSH / RAID / deploy target">
-          {{with index $.DataIPs .ID}}
+          {{with index $.DataIPs $srv.ID}}
           <code class="data-ip">{{.}}</code>
           {{else}}
           <span class="muted">—</span>
           {{end}}
         </td>
         <td class="raid-cell">
-          {{with index $.RaidFamily .ID}}
+          {{with index $.RaidFamily $srv.ID}}
           <span class="badge badge-raid">{{.}}</span>
           {{else}}
           <span class="muted">—</span>
           {{end}}
         </td>
-        <td>{{if .ChassisID}}<code>{{.ChassisID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
-        <td>{{if .Endpoint}}<code>{{.Endpoint}}</code>{{else}}<span class="muted">pending</span>{{end}}</td>
-        <td>{{if .MAC}}<code>{{.MAC}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
-        <td>{{.Username}}</td>
+        <td>{{if $srv.ChassisID}}<code>{{$srv.ChassisID}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{if $srv.Endpoint}}<code>{{$srv.Endpoint}}</code>{{else}}<span class="muted">pending</span>{{end}}</td>
+        <td>{{if $srv.MAC}}<code>{{$srv.MAC}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{$srv.Username}}</td>
         <td class="actions">
-          <a href="/servers/{{.ID}}">Open</a>
-          <a href="/servers/{{.ID}}/storage">Storage</a>
-          <a href="/servers/{{.ID}}/softraid">Soft RAID</a>
-          <a href="/servers/{{.ID}}/deploy">Deploy</a>
-          <form method="post" action="/servers/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Name}}?')">
+          <a href="/servers/{{$srv.ID}}">Open</a>
+          <a href="/servers/{{$srv.ID}}/storage">Storage</a>
+          <a href="/servers/{{$srv.ID}}/softraid">Soft RAID</a>
+          <a href="/servers/{{$srv.ID}}/deploy">Deploy</a>
+          <form method="post" action="/servers/{{$srv.ID}}/delete" onsubmit="return confirm('Delete {{$srv.Name}}?')">
             <button type="submit" class="linkish">Delete</button>
           </form>
         </td>

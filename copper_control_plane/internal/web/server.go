@@ -65,6 +65,7 @@ type pageData struct {
 	FilterStatus    string
 	FilterQ         string
 	FilterActive    bool
+	FilterHW        hardwareListFilter // structured inventory query
 	Editing         bool // server form is an existing row; false on add (including validation re-render)
 	Result          string
 	ResultKind      string // inventory | boot | virtual-media | reset | mount
@@ -171,10 +172,14 @@ type leaseRow struct {
 	NIC        string `json:"nic,omitempty"`
 }
 
+var templateFuncs = template.FuncMap{
+	"add": func(a, b int) int { return a + b },
+}
+
 func New(cfg *config.Config, st *store.Store, ag *agent.Client, localDHCP *copper_dhcp.Manager, localAct *activity.Buffer, dataMedia *datamedia.Manager, jobReg *jobs.Registry, templatesFS, staticFS fs.FS) (*Server, error) {
 	pages := map[string]*template.Template{}
 	for _, name := range []string{"login.html", "servers.html", "server_form.html", "server_detail.html", "server_import.html", "dhcp.html", "dhcp_data.html", "activity.html", "jobs.html", "settings.html", "storage.html", "softraid.html", "deploy.html"} {
-		t, err := template.ParseFS(templatesFS, "templates/layout.html", "templates/partials/*.html", "templates/"+name)
+		t, err := template.New("").Funcs(templateFuncs).ParseFS(templatesFS, "templates/layout.html", "templates/partials/*.html", "templates/"+name)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
@@ -439,6 +444,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		FilterLabelSet: labelSet,
 		FilterStatus:   filter.Status,
 		FilterQ:        filter.Q,
+		FilterHW:       filter.Hardware,
 		FilterActive:   filter.Active(),
 	}
 	if flash := r.URL.Query().Get("flash"); flash != "" {
@@ -1044,6 +1050,14 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request, kind string, 
 				s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
 					Title: srv.Name, Authed: true, Server: srv,
 					Error: "inventory cached but chassis_id update failed: " + err.Error(),
+					Result: formatted, ResultKind: kind, ResultFetchedAt: fetchedAt,
+				}))
+				return
+			}
+			if err := s.store.RefreshHardwareFactsFromInventory(srv.ID, formatted); err != nil {
+				s.render(w, "server_detail.html", s.withMediaCatalog(pageData{
+					Title: srv.Name, Authed: true, Server: srv,
+					Error: "inventory cached but hardware facts update failed: " + err.Error(),
 					Result: formatted, ResultKind: kind, ResultFetchedAt: fetchedAt,
 				}))
 				return

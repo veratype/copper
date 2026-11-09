@@ -227,6 +227,24 @@ td.actions form { display: inline; }
   letter-spacing: 0;
   font-size: 0.75rem;
 }
+.badge-hw {
+  background: #f3f5f8;
+  color: #243040;
+  border: 1px solid var(--line);
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
+.hw-cell { max-width: 14rem; }
+.hw-chip-row { max-width: 16rem; }
 .badge-installed {
   background: #fde8e4;
   color: var(--danger, #b42318);
@@ -286,10 +304,34 @@ td.actions form { display: inline; }
   padding: 0;
   min-width: 0;
 }
-.filter-labels legend {
+.filter-labels legend,
+.filter-hardware legend {
   padding: 0;
   margin: 0 0 0.35rem;
   font-size: 0.85rem;
+}
+.filter-hardware {
+  flex: 1 1 100%;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.filter-hw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.55rem 0.75rem;
+}
+.filter-hw-grid label {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  font-size: 0.8rem;
+}
+.filter-hw-grid input,
+.filter-hw-grid select {
+  width: 100%;
+  min-width: 0;
 }
 .filter-actions {
   display: flex;
@@ -615,6 +657,12 @@ body.is-busy button, body.is-busy .btn { pointer-events: none; opacity: 0.7; }
 .batch-actions .btn[hidden],
 .batch-actions a[hidden] {
   display: none !important;
+}
+.col-num {
+  width: 2.4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .col-check { width: 2.2rem; text-align: center; }
 .row-status {

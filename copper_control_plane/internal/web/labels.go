@@ -72,15 +72,17 @@ func parseLabelsForm(r *http.Request) ([]string, error) {
 }
 
 type serverListFilter struct {
-	Labels []string
-	Status string // "", declared, bound
-	Q      string
+	Labels   []string
+	Status   string // "", declared, bound
+	Q        string
+	Hardware hardwareListFilter
 }
 
 func parseServerListFilter(q url.Values) serverListFilter {
 	f := serverListFilter{
-		Status: strings.ToLower(strings.TrimSpace(q.Get("status"))),
-		Q:      strings.TrimSpace(q.Get("q")),
+		Status:   strings.ToLower(strings.TrimSpace(q.Get("status"))),
+		Q:        strings.TrimSpace(q.Get("q")),
+		Hardware: parseHardwareListFilter(q),
 	}
 	raw := q["label"]
 	if len(raw) == 0 {
@@ -97,7 +99,7 @@ func parseServerListFilter(q url.Values) serverListFilter {
 }
 
 func (f serverListFilter) Active() bool {
-	return len(f.Labels) > 0 || f.Status != "" || f.Q != ""
+	return len(f.Labels) > 0 || f.Status != "" || f.Q != "" || f.Hardware.Active()
 }
 
 func applyServerListFilter(servers []store.Server, f serverListFilter) []store.Server {
@@ -124,6 +126,15 @@ func applyServerListFilter(servers []store.Server, f serverListFilter) []store.S
 		}
 		out = filtered
 	}
+	if f.Hardware.Active() {
+		filtered := make([]store.Server, 0, len(out))
+		for _, srv := range out {
+			if f.Hardware.Match(srv.Hardware) {
+				filtered = append(filtered, srv)
+			}
+		}
+		out = filtered
+	}
 	return out
 }
 
@@ -132,6 +143,14 @@ func serverMatchesQuery(srv store.Server, qLower string) bool {
 		srv.Name, srv.Endpoint, srv.MAC, srv.ChassisID, srv.Username, srv.Notes,
 	}
 	hay = append(hay, srv.Labels...)
+	if hw := srv.Hardware; hw != nil {
+		hay = append(hay,
+			hw.CPUSummary, hw.RAMSummary, hw.GPUSummary, hw.StorageSummary,
+			hw.NICSummary, hw.PSUSummary,
+		)
+		hay = append(hay, hw.CPUModels...)
+		hay = append(hay, hw.GPUModels...)
+	}
 	for _, h := range hay {
 		if strings.Contains(strings.ToLower(h), qLower) {
 			return true

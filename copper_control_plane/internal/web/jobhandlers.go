@@ -571,6 +571,10 @@ func (s *Server) runRedfishJob(job *jobs.Job, progress jobs.Progress, kind strin
 			} else if ok {
 				progress("inventory", "chassis_id ← system.serial_number "+srv.ChassisID)
 			}
+			if err := s.store.RefreshHardwareFactsFromInventory(srv.ID, formatted); err != nil {
+				return fmt.Errorf("inventory cached but hardware facts update failed: %w", err)
+			}
+			progress("inventory", "hardware facts refreshed")
 		}
 	}
 	s.jobs.SetResult(job.ID, parsed)

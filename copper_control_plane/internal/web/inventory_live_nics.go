@@ -140,6 +140,9 @@ func (s *Server) waitAndClaimLiveOSNICs(ctx context.Context, srv *store.Server, 
 				if err := s.store.SaveSnapshot(srv.ID, "inventory", newPayload); err != nil {
 					return 0, fmt.Errorf("save inventory: %w", err)
 				}
+				if err := s.store.RefreshHardwareFactsFromInventory(srv.ID, newPayload); err != nil {
+					return 0, fmt.Errorf("hardware facts: %w", err)
+				}
 			}
 			s.markClaimTaken(srv.ID, c.IP)
 			if progress != nil {
@@ -365,6 +368,9 @@ func (s *Server) claimNICsFromLeaseIP(ctx context.Context, leaseIP, leaseMAC str
 		if n > 0 {
 			if err := s.store.SaveSnapshot(srv.ID, "inventory", newPayload); err != nil {
 				return err
+			}
+			if err := s.store.RefreshHardwareFactsFromInventory(srv.ID, newPayload); err != nil {
+				return fmt.Errorf("hardware facts: %w", err)
 			}
 		}
 		// Persist admin-visible binding so Unassign can clear a wrong Resolve.

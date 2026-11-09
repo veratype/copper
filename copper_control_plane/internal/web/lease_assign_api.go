@@ -173,6 +173,9 @@ func (s *Server) attachMACToServerInventory(ctx context.Context, serverID int64,
 	if err := s.store.SaveSnapshot(serverID, "inventory", newPayload); err != nil {
 		return false, err
 	}
+	if err := s.store.RefreshHardwareFactsFromInventory(serverID, newPayload); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -288,6 +291,9 @@ func (s *Server) removeMACFromServerInventory(ctx context.Context, serverID int6
 		return false, err
 	}
 	if err := s.store.SaveSnapshot(serverID, "inventory", string(formatted)); err != nil {
+		return false, err
+	}
+	if err := s.store.RefreshHardwareFactsFromInventory(serverID, string(formatted)); err != nil {
 		return false, err
 	}
 	return true, nil

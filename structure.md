@@ -192,6 +192,7 @@ DHCP pool policy is **not** in YAML; it lives in the UI and SQLite settings.
 | `servers` | Name, Redfish endpoint, username/password, insecure flag, BMC MAC, notes |
 | `settings` | Key/value: agent host/port, `agent_dhcp_config`, `local_dhcp_config`, batch runtime |
 | `snapshots` | Cached Redfish JSON / storage detect / layout per server + kind |
+| `server_hw_facts` | Deduped structured hardware summary (CPU/RAM/GPU/storage/NIC/PSU) rebuilt after inventory |
 | `jobs` | Durable job history (status, phase, progress, log, payload/result) |
 
 ### Agent client (`internal/agent`)
@@ -227,6 +228,8 @@ Background work (probe, inventory, reset, mount, RAID `storage.detect` / `storag
 Nested work inside a job (e.g. mount → live-OS NIC claim, provision → boot/eject/reboot) stays under that job’s server lock — do not take the lock again (not reentrant).
 
 **UI:** enqueue returns immediately with `job_id`; the Jobs dock / `/jobs` / `GET /api/jobs` poll progress. Batch actions enqueue one job per selected server (cross-server parallel; same server never selected twice in one batch row).
+
+**Hardware facts (not labels):** after a successful `redfish.inventory` (and when inventory NICs are merged), the control plane summarizes/dedupes the snapshot into `server_hw_facts` (CPU models/counts, RAM GiB, GPU, storage buckets like `HDD×N` / `NVMe×N`, NIC, PSU). Free-form `labels` stay admin-owned. The Servers list shows hardware columns and supports AND filters (`cpu`, `ram_min`, `gpu`/`gpu_type`, `hdd_min`, `nvme_min`, `nic_min`, …). Startup backfills facts from existing inventory snapshots.
 
 ### Web UI routes (`internal/web`)
 
