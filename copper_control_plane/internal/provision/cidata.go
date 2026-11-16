@@ -29,6 +29,9 @@ type Cidata struct {
 	AddressCIDR string      `json:"address_cidr,omitempty"` // static: 10.0.0.20/24
 	Gateway     string      `json:"gateway,omitempty"`
 	DNS         []string    `json:"dns,omitempty"`
+	// GrubCmdlineExtra is appended to the image's GRUB_CMDLINE_LINUX_DEFAULT
+	// (never replaces). Empty means leave GRUB cmdline unchanged.
+	GrubCmdlineExtra string `json:"grub_cmdline_extra,omitempty"`
 }
 
 func (c Cidata) Normalize() Cidata {
@@ -39,6 +42,7 @@ func (c Cidata) Normalize() Cidata {
 	out.MAC = normalizeMAC(out.MAC)
 	out.AddressCIDR = strings.TrimSpace(out.AddressCIDR)
 	out.Gateway = strings.TrimSpace(out.Gateway)
+	out.GrubCmdlineExtra = normalizeGrubCmdlineExtra(out.GrubCmdlineExtra)
 	out.NetworkMode = NetworkMode(strings.ToLower(strings.TrimSpace(string(out.NetworkMode))))
 	if out.NetworkMode == "" {
 		out.NetworkMode = NetDHCP
@@ -60,7 +64,7 @@ func normalizeMAC(s string) string {
 	return s
 }
 
-// ValidateCredentials checks username/password only (before per-host NIC/address expand).
+// ValidateCredentials checks username/password and GRUB extras (before per-host NIC/address expand).
 func (c Cidata) ValidateCredentials() error {
 	c = c.Normalize()
 	if c.Username == "" {
@@ -68,6 +72,9 @@ func (c Cidata) ValidateCredentials() error {
 	}
 	if c.Password == "" {
 		return fmt.Errorf("password is required")
+	}
+	if err := validateGrubCmdlineExtra(c.GrubCmdlineExtra); err != nil {
+		return err
 	}
 	return nil
 }

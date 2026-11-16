@@ -410,6 +410,22 @@ exit 0
 		return fmt.Errorf("cidata inject did not confirm success\n--- remote ---\n%s", remoteDiag(out))
 	}
 
+	// Append admin GRUB kernel cmdline extras (never replace image defaults).
+	grubExtra := req.Cidata.Normalize().GrubCmdlineExtra
+	if grubExtra != "" {
+		progress("grub", "append kernel cmdline to GRUB_CMDLINE_LINUX_DEFAULT")
+		progress("grub", "append| "+grubExtra)
+		grubScript := buildGrubCmdlineScript(req.TargetDisk, grubExtra)
+		out, err = storage.RunSSHRetry(ctx, h.IP, h.Creds, "sudo -n bash -lc "+storage.ShellQuote(grubScript), 3)
+		logLines(progress, "grub", out)
+		if err != nil {
+			return fmt.Errorf("GRUB cmdline append failed: %v\n--- remote ---\n%s", err, remoteDiag(out))
+		}
+		if !strings.Contains(out, "GRUB_CMDLINE_OK") {
+			return fmt.Errorf("GRUB cmdline append did not confirm success\n--- remote ---\n%s", remoteDiag(out))
+		}
+	}
+
 	// Second-hand / multi-disk hosts: Redfish "Hdd" only means "boot some hard disk".
 	// Firmware may still prefer an older OS on another drive. Probe efibootmgr on
 	// the live OS; Go decides deletions + BootOrder; tiny scripts apply -B/-c/-o.
@@ -583,6 +599,8 @@ rm -f "$TMP/mnt/etc/copper-provisioned" "$TMP/mnt/etc/copper-image.sha256" 2>/de
 rm -f "$TMP/mnt/etc/cloud/cloud.cfg.d/90_copper_datasource.cfg" 2>/dev/null || true
 rm -f "$TMP/mnt/etc/cloud/cloud.cfg.d/"*disable-network* 2>/dev/null || true
 rm -f "$TMP/mnt/etc/cloud/cloud.cfg.d/99_copper_network_enable.cfg" 2>/dev/null || true
+# Drop prior Copper GRUB append so a re-deploy without extras does not keep them.
+rm -f "$TMP/mnt/etc/default/grub.d/99-copper-cmdline.cfg" 2>/dev/null || true
 # Force cloud-init to treat next boot as first boot for networking/users.
 rm -f "$TMP/mnt/etc/machine-id" 2>/dev/null || true
 : > "$TMP/mnt/etc/machine-id" 2>/dev/null || true

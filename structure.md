@@ -243,7 +243,7 @@ Auth: cookie session after login with `master_password`.
 | Sync | `POST /servers/sync-dhcp` | Match OOB DHCP leases → fill MAC/IP, mark `bound` |
 | Actions (forms) | `POST .../actions/{probe,inventory,boot,virtual-media,reset,mount,…}` | Sync Redfish under **per-server lock** |
 | Actions (API) | `POST /api/servers/{id}/actions/{probe,inventory,reset,mount,detect-raid}` | **Enqueue** jobs |
-| Storage / Deploy | `/storage`, `/servers/{id}/storage`, `/deploy`, related `/api/...` | RAID detect/config/exec + partition wipe via **jobs**; live SSH scans (`GET .../host/partitions`, disks, nics) via **`WithServer`** |
+| Storage / Deploy | `/storage`, `/servers/{id}/storage`, `/deploy`, related `/api/...` | RAID detect/config/exec + partition wipe via **jobs**; live SSH scans (`GET .../host/partitions`, disks, nics) via **`WithServer`**; Deploy may append admin `grub_cmdline_extra` to image `GRUB_CMDLINE_LINUX_DEFAULT` |
 | Jobs | `/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}` | List / poll job status |
 | OOB DHCP | `/dhcp/oob` (+ save / push) | Policy saved locally; **push** → agent `PUT /v1/dhcp/config` |
 | Data DHCP | `/dhcp/data` (+ save / apply), `POST /api/dhcp/data/claim-nics` | Runs `copper_dhcp.Manager` **in this process**; Resolve on unknown leases enqueues `inventory.claim-nics` |

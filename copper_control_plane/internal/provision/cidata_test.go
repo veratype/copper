@@ -100,3 +100,47 @@ func TestCidataRejectsBadHostname(t *testing.T) {
 		t.Fatal("expected invalid hostname error")
 	}
 }
+
+func TestGrubCmdlineExtraNormalizeAndValidate(t *testing.T) {
+	c := Cidata{
+		Username:         "ubuntu",
+		Password:         "x",
+		NetworkMode:      NetDHCP,
+		Interface:        "ens3",
+		GrubCmdlineExtra: "  console=ttyS0,115200n8   intel_iommu=on  ",
+	}
+	c = c.Normalize()
+	if c.GrubCmdlineExtra != "console=ttyS0,115200n8 intel_iommu=on" {
+		t.Fatalf("normalize: got %q", c.GrubCmdlineExtra)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	bad := c
+	bad.GrubCmdlineExtra = `console=ttyS0; rm -rf /`
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected reject for shell metacharacters")
+	}
+}
+
+func TestGrubDropInAndFinal(t *testing.T) {
+	got := GrubDropInContent("console=ttyS0,115200n8")
+	for _, want := range []string{
+		"GRUB_CMDLINE_LINUX_DEFAULT=",
+		"$GRUB_CMDLINE_LINUX_DEFAULT console=ttyS0,115200n8",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("drop-in missing %q\n%s", want, got)
+		}
+	}
+	if GrubDropInContent("  ") != "" {
+		t.Fatal("empty extras should yield empty drop-in")
+	}
+	final := FormatGrubCmdlineFinal("quiet splash", "console=ttyS0")
+	if final != "quiet splash console=ttyS0" {
+		t.Fatalf("final: got %q", final)
+	}
+	if FormatGrubCmdlineFinal("", "a=b") != "a=b" {
+		t.Fatal("final with empty existing")
+	}
+}

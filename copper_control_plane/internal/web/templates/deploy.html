@@ -140,6 +140,11 @@
         <tbody id="cidataPreviewBody"></tbody>
       </table>
     </div>
+    <label>Extra GRUB kernel parameters (optional)
+      <textarea id="grubExtra" rows="2" spellcheck="false" placeholder="console=ttyS0,115200n8 intel_iommu=on"></textarea>
+    </label>
+    <p class="muted">Appended to the cloud image’s existing <code>GRUB_CMDLINE_LINUX_DEFAULT</code> (never replaces). Same value for every host in a batch. Exact image defaults are read on the target during provision.</p>
+    <pre id="grubPreview" class="console net-preview" aria-live="polite">GRUB cmdline preview…</pre>
   </div>
 
   <div class="panel stack">
@@ -486,6 +491,28 @@
     return m.provisioned_dns.split(",").map(function(s){ return s.trim(); }).filter(Boolean);
   }
 
+  function grubExtraValue(){
+    return ($("grubExtra").value || "").trim().replace(/\s+/g, " ");
+  }
+
+  function updateGrubPreview(){
+    var el = $("grubPreview");
+    if(!el) return;
+    var extra = grubExtraValue();
+    var lines = [
+      "Existing (from image):  <resolved on target during provision>",
+      "Appended (admin):       "+(extra || "(none)"),
+      "Final:                  <image GRUB_CMDLINE_LINUX_DEFAULT>"+(extra ? " "+extra : "")
+    ];
+    if(batchMode){
+      lines.push("Batch: same append on every host");
+    }
+    if(!extra){
+      lines.push("(empty — GRUB cmdline left unchanged)");
+    }
+    el.textContent = lines.join("\n");
+  }
+
   function updateNetPreview(){
     var nic = selectedNIC();
     var mode = $("netMode").value;
@@ -525,6 +552,7 @@
     }
     $("netPreview").textContent = lines.join("\n");
     updateCidataPreview();
+    updateGrubPreview();
   }
 
   function targetsLine(){
@@ -1072,7 +1100,8 @@
         mac: ns === "data_nic" || batchMode ? "" : nic.mac,
         address_cidr: $("netCIDR").value.trim(),
         gateway: $("netGW").value.trim(),
-        dns: ($("netDNS").value||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean)
+        dns: ($("netDNS").value||"").split(",").map(function(s){ return s.trim(); }).filter(Boolean),
+        grub_cmdline_extra: grubExtraValue()
       }
     };
   }
@@ -1132,7 +1161,8 @@
         var raw = lines[seen];
         if(/\[error\]/i.test(raw) || /ERROR:/i.test(raw)) cls = "error";
         else if(/WARN:|EFIBOOT_SKIP/i.test(raw)) cls = "error";
-        else if(/WRITE_OK|CIDATA_OK|GPT_OK|REIDENTIFY_OK|EFIBOOT_OK|finished OK|preflight OK/i.test(raw)) cls = "ok";
+        else if(/WRITE_OK|CIDATA_OK|GPT_OK|REIDENTIFY_OK|EFIBOOT_OK|GRUB_CMDLINE_OK|GRUB_UPDATE_OK|finished OK|preflight OK/i.test(raw)) cls = "ok";
+        else if(/GRUB_CMDLINE_FINAL=/i.test(raw)) cls = "ok";
         // DOWNLOAD_PROGRESS is noisy in the log pane; keep table "last" updated,
         // only echo milestone %% lines (0/25/50/75/100) into the shared log.
         var dm = raw.match(/DOWNLOAD_PROGRESS\s+pct=(\d+)/);
@@ -1322,10 +1352,11 @@
   document.querySelectorAll('input[name="nicSelect"]').forEach(function(el){
     el.addEventListener("change", syncBatchFormHints);
   });
-  ["imagePath","imageURL","targetDisk","ciUser","ciPass","ciHost","netIface","netCIDR","netGW","netDNS"].forEach(function(id){
+  ["imagePath","imageURL","targetDisk","ciUser","ciPass","ciHost","netIface","netCIDR","netGW","netDNS","grubExtra"].forEach(function(id){
     $(id).addEventListener("input", updateProvisionEnabled);
     $(id).addEventListener("change", updateProvisionEnabled);
   });
+  $("grubExtra").addEventListener("input", updateGrubPreview);
   $("targetDisk").addEventListener("change", updateBootHint);
   $("btnRefreshDisks").addEventListener("click", refreshDisks);
   $("btnRefreshNICs").addEventListener("click", refreshNICs);
@@ -1338,6 +1369,7 @@
   targetsLine();
   syncBatchFormHints();
   updateBootHint();
+  updateGrubPreview();
   ensureRows(SERVER_IDS);
   loadLayoutPrimary().then(function(){ return refreshNICs(); }).catch(function(e){ log(String(e),"error"); });
 })();
@@ -1356,6 +1388,12 @@ fieldset.nic-select legend { padding: 0 0.35rem; color: var(--muted); font-size:
   white-space: pre-wrap;
 }
 #netPreview.console { min-height: 7rem; max-height: 14rem; }
+#grubExtra {
+  width: 100%; font-family: var(--font-mono); font-size: 0.85rem;
+  padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: 6px;
+  resize: vertical; box-sizing: border-box;
+}
+#grubPreview.console { min-height: 5rem; max-height: 10rem; }
 .cidata-paths { margin: 0.25rem 0 0.75rem 1.1rem; padding: 0; }
 .cidata-paths li { margin: 0.2rem 0; }
 #provLog .error { color: #ffb4a0; }
